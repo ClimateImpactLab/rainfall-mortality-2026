@@ -1,0 +1,25 @@
+#Ignore all of these types of files
+
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+.ipynb_checkpoints/
+
+# -----------------------
+# Logs
+# -----------------------
+*.log
+slurm-*.out
+
+# -----------------------
+# Large raw data (never version control)
+# -----------------------
+*.dta
+
+# -----------------------
+# Temporary folders
+# -----------------------
+temp/
+
