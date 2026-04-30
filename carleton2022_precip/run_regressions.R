@@ -1,9 +1,6 @@
 #========================================================================================#
 #' Estimate precip responses using data from Carleton et al 2022
 #'
-#' Created By: Nishka Sharma
-#' Date Created: Apr 24 2025
-#'
 #' Produces:
 #'   - replicate "/project/cil/battuta_shares/gcp/estimation/mortality/release_2020/data/1_estimation/1_ster/age_spec/Agespec_response_spec2.ster  
 #'   - estimate new regressions 
@@ -23,40 +20,56 @@ invisible(lapply(packages, function(pkg) {
 
 rm(packages)
 #========================================================================================#
+# set paths
+data_dir <- "/project/cil/battuta_shares/gcp/estimation/mortality"
+USER = Sys.getenv("USER")
+setwd(glue("/project/cil/home_dirs/{USER}/rainfall-mortality-2026/"))
+#========================================================================================#
+
 # read data
-mortality_data <- read_dta("/project/cil/battuta_shares/gcp/estimation/mortality/release_2020/data/0_data_cleaning/3_final/global_mortality_panel.dta")
+mortality_data <- read_dta(glue(data_dir, 
+                                "/release_2020/data/0_data_cleaning/3_final/", 
+                                "global_mortality_panel.dta")) %>% 
+  select(-contains("BEST"),
+         -contains("Spline"),
+         -contains("bins"),
+         -contains("rcs"),
+         -contains("cdd|hdd"))
 
 # prep data for regressions
 source("carelton2022_precip/prep_data.R")
 
 # replicate Agespec_response_spec2.ster
-mortality_data <- mortality_data %>%
+fit_mod <- function(df){
+  
+  # get weights
+  df <- df %>%
     group_by(year, agegroup) %>%
     mutate(tot_pop = sum(population, na.rm = TRUE)) %>%
     ungroup() %>%
     mutate(weight = population/tot_pop, # generate weights
            agegroup = as.factor(agegroup), # convert to factor for feols
            adm0_code = as.factor(adm0_code)) # convert to factor for feols
+  
+  # run regression
+  fit <- feols(
+    deathrate_w99 ~ 
+      tavg_poly_1_GMFD:agegroup + 
+      tavg_poly_2_GMFD:agegroup + 
+      tavg_poly_3_GMFD:agegroup + 
+      tavg_poly_4_GMFD:agegroup + 
+      adm0_code:prcp_poly_1_GMFD:agegroup + 
+      adm0_code:prcp_poly_2_GMFD:agegroup |
+      adm2_code^CHN_ts^agegroup + # fixed effects
+      adm0_code^year^agegroup, # fixed effects
+    data = mortality_data,
+    weights = ~weight, # analytic weights
+    cluster = ~adm1_code, # clustered SEs
+    lean=TRUE # reduce size of output to make it less crashy
+  )
+  fit
+}
 
-# fixed effects regression
-fit <- feols(
-  deathrate_w99 ~ 
-    tavg_poly_1_GMFD:agegroup + 
-    tavg_poly_2_GMFD:agegroup + 
-    tavg_poly_3_GMFD:agegroup + 
-    tavg_poly_4_GMFD:agegroup + 
-    adm0_code:prcp_poly_1_GMFD:agegroup + 
-    adm0_code:prcp_poly_2_GMFD:agegroup |
-    adm2_code^CHN_ts^agegroup + # fixed effects
-    adm0_code^year^agegroup, # fixed effects
-  data = mortality_data,
-  weights = ~weight, # analytic weights
-  cluster = ~adm1_code # clustered SEs
-)
-
-# extract residuals
-# df$e_hat <- residuals(fit)
-
-summary(fit)
-# etable(fit, file = "output/tables/Agespec_response_spec2_R.tex")
+agespec_response_spec2 <- fit_mod(mortality_data)
+etable(agespec_response_spec2)
 
