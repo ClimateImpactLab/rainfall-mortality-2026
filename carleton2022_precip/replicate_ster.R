@@ -71,4 +71,6 @@ etable(m0, m1)
 
 r2(m1, type = "r2") 
 
+summary(m1)
+
 
