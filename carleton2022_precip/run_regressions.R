@@ -11,7 +11,7 @@
 #'   - set working directory at the root of the repository
 #========================================================================================#
 packages = c("tidyr", "ggplot2", "dplyr", "magrittr", "readr", "glue", "scales", 
-             "parallel", "RColorBrewer", "MetBrewer", "fixest", "haven")
+            "stringr", "parallel", "RColorBrewer", "MetBrewer", "fixest", "haven")
 
 message(" ---- loading packages ---- ")
 invisible(lapply(packages, function(pkg) {
@@ -21,55 +21,53 @@ invisible(lapply(packages, function(pkg) {
 rm(packages)
 #========================================================================================#
 # set paths
-data_dir <- "/project/cil/battuta_shares/gcp/estimation/mortality"
 USER = Sys.getenv("USER")
-setwd(glue("/project/cil/home_dirs/{USER}/rainfall-mortality-2026/"))
+source(glue("/project/cil/home_dirs/{USER}/repos/rainfall-mortality-2026/0_utils/paths.R"))
+
+# load functions
+source(glue("/project/cil/home_dirs/{USER}/repos/rainfall-mortality-2026/0_utils/functions.R"))
+
+# set working directory
+# setwd(glue("/project/cil/home_dirs/{USER}/rainfall-mortality-2026/"))
 #========================================================================================#
 
 # read data
-mortality_data <- read_dta(glue(data_dir, 
-                                "/release_2020/data/0_data_cleaning/3_final/", 
-                                "global_mortality_panel.dta")) %>% 
+mortality_data <- read_dta(glue(CARLETON_2022_DATA_DIR, 
+                                "0_data_cleaning/3_final/global_mortality_panel.dta")) %>% 
   select(-contains("BEST"),
          -contains("Spline"),
          -contains("bins"),
          -contains("rcs"),
-         -contains("cdd|hdd"))
+         -contains("cdd"), 
+         -contains("hdd"), 
+         -contains("UDEL"), 
+         -contains("13"), 
+         -contains("tmax"))
 
 # prep data for regressions
-source("carelton2022_precip/prep_data.R")
+source(glue(DIR_REPO_RAINFALL_MORTALITY, "/carleton2022_precip/prep_data.R"))
+
+# more clean up
+names(mortality_data) <- str_remove_all(names(mortality_data), "_GMFD")
+mortality_data <- mortality_data %>%
+  mutate(log_deathrate_w99 = log(deathrate_w99)) # create log of winsorised death rate 
 
 # replicate Agespec_response_spec2.ster
-fit_mod <- function(df){
-  
-  # get weights
-  df <- df %>%
-    group_by(year, agegroup) %>%
-    mutate(tot_pop = sum(population, na.rm = TRUE)) %>%
-    ungroup() %>%
-    mutate(weight = population/tot_pop, # generate weights
-           agegroup = as.factor(agegroup), # convert to factor for feols
-           adm0_code = as.factor(adm0_code)) # convert to factor for feols
-  
-  # run regression
-  fit <- feols(
-    deathrate_w99 ~ 
-      tavg_poly_1_GMFD:agegroup + 
-      tavg_poly_2_GMFD:agegroup + 
-      tavg_poly_3_GMFD:agegroup + 
-      tavg_poly_4_GMFD:agegroup + 
-      adm0_code:prcp_poly_1_GMFD:agegroup + 
-      adm0_code:prcp_poly_2_GMFD:agegroup |
-      adm2_code^CHN_ts^agegroup + # fixed effects
-      adm0_code^year^agegroup, # fixed effects
-    data = mortality_data,
-    weights = ~weight, # analytic weights
-    cluster = ~adm1_code, # clustered SEs
-    lean=TRUE # reduce size of output to make it less crashy
-  )
-  fit
-}
-
-agespec_response_spec2 <- fit_mod(mortality_data)
+agespec_response_spec2 <- fit_response(data = mortality_data, 
+                                       tavg_order = 4, 
+                                       prcp_order = 2,
+                                       country_prcp = TRUE)
 etable(agespec_response_spec2)
 
+# estimate the above without adm0 interactions of precip poly
+agespec_response_unint <- fit_response(data = mortality_data, 
+                                       tavg_order = 4, 
+                                       prcp_order = 2)
+etable(agespec_response_unint)
+
+# estimate the above without adm0 interactions of precip poly
+agespec_response_log_deathrate <- fit_response(data = mortality_data, 
+                                       lhs = "log_deathrate_w99",
+                                       tavg_order = 4, 
+                                       prcp_order = 2)
+etable(agespec_response_log_deathrate)

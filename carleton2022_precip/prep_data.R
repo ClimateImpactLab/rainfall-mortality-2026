@@ -2,9 +2,6 @@
 #' Prepare data for regressions following 
 #' https://github.com/ClimateImpactLab/carleton_mortality_2022/blob/main/1_estimation/1_utils/prep_data.do
 #'
-#' Created By: Nishka Sharma
-#' Date Created: Apr 24 2025
-#'
 #' Produces:
 #'   - cleaned and regression ready global_mortality_panel
 #=========================================================================================#
@@ -30,21 +27,17 @@ mortality_data <- mortality_data %>%
 # create winsorized deathrate with-in country-agegroup
 mortality_data <- mortality_data %>%
     group_by(iso, agegroup) %>%
-    mutate(deathrate_w99 = pmin(deathrate, quantile(deathrate, 0.99, na.rm = TRUE))) %>%
+  #  mutate(deathrate_w99 = pmin(deathrate, quantile(deathrate, 0.99, na.rm = TRUE))) %>%
+    mutate(deathrate_w99 = pmin(deathrate, quantile(deathrate, 0.99, na.rm = TRUE, type = 2))) %>%
     ungroup()
 
 # set up sample 
 mortality_data <- mortality_data %>%
-    mutate(sample = 0,
-           sample = case_when(
-               agegroup != 0 & year <= 2010 ~ 1,
-               is.na(deathrate_w99) ~ 0,
-               is.na(tavg_poly_1_GMFD) ~ 0,
-               is.na(prcp_poly_1_GMFD) ~ 0,
-               is.na(loggdppc_adm1_avg) ~ 0,
-               is.na(lr_tavg_GMFD_adm1_avg) ~ 0
-           )) %>%
-    filter(sample == 1)
+  filter(!is.na(deathrate_w99),
+         !is.na(tavg_poly_1_GMFD),
+         !is.na(prcp_poly_1_GMFD),
+         !is.na(loggdppc_adm1_avg),
+         !is.na(lr_tavg_GMFD_adm1_avg))
 
 # clean up ids
 mortality_data <- mortality_data %>%
