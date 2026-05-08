@@ -162,3 +162,31 @@ build_response <- function(fit, x, poly_order, groups, key,
   # remove missing y_hat values
   out %>% filter(!is.na(dy))
 }
+
+#' Plot response
+#' 
+plot_response <- function(rf_data, color = "agegroup", facet = NULL,
+                          xlab = NULL, ylab = "Δ outcome (vs x = ref)",
+                          scales='fixed') {
+  
+  color_palette <- met.brewer("Hokusai3", n = 3)
+  
+  p <- ggplot(rf_data, aes(x, dy, color = .data[[color]], fill = .data[[color]])) +
+    geom_hline(yintercept=0, linewidth = 1, color="black", alpha=0.1)+
+    geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.3, color = NA) +
+    geom_line(linewidth = 1) +
+    scale_color_manual(values = color_palette) +
+    scale_fill_manual(values = color_palette) +
+    labs(x = xlab, y = ylab) +
+    theme_classic() +
+    theme(legend.key.spacing.y = unit(0.3, "cm") ,
+          legend.key.width = unit(1.5, "cm"),
+          axis.line = element_line(color = "black", linewidth = 1),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 14),
+          plot.title = element_text(size = 16, face = "bold"),
+          strip.text = element_text(size = 12)) +
+  guides(fill = "none")
+  if (!is.null(facet)) p <- p + facet_wrap(facet, scales = scales)
+  p
+}
