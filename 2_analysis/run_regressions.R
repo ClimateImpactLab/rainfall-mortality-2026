@@ -60,10 +60,10 @@ mortality_data <- get_weights(mortality_data) %>%
 
 # test the functions first
 # # replicate Agespec_response_spec2.ster
-# agespec_response_spec2 <- fit_response(data = mortality_data, 
-#                                        tavg_order = 4, 
+# agespec_response_spec2 <- fit_response(data = mortality_data,
+#                                        tavg_order = 4,
 #                                        prcp_order = 2,
-#                                        country_prcp = TRUE)
+#                                        interact_var = "adm0_code")
 
 # # estimate the above without adm0 interactions of precip poly
 # agespec_response_unint <- fit_response(data = mortality_data, 
@@ -73,7 +73,7 @@ mortality_data <- get_weights(mortality_data) %>%
 # agespec_response_unint_rf <- build_response(agespec_response_unint, 
 #                                             x = 0:300, poly_order = 2,
 #                                             groups = tibble(agegroup = levels(mortality_data$agegroup)),
-#                                             key = make_coef_names("prcp_poly_", country = FALSE), 
+#                                             key = make_coef_names("prcp_poly_"),
 #                                             id = "Precip")
 
 # estimate agethe above without adm0 interactions of precip poly
@@ -85,7 +85,7 @@ agespec_log_deathrate <- fit_response(data = mortality_data,
 log_deathrate_rf <- build_response(agespec_log_deathrate,
                                    x = 0:300, poly_order = 3,
                                    groups = tibble(agegroup = levels(mortality_data$agegroup)),
-                                   key = make_coef_names("prcp_poly_", country = FALSE), 
+                                   key = make_coef_names("prcp_poly_"),
                                    id = "Precip")
 # plot
 log_deathrate_rf <- log_deathrate_rf %>%

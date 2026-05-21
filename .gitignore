@@ -17,6 +17,7 @@ slurm-*.out
 # Large raw data (never version control)
 # -----------------------
 *.dta
+*.parquet
 
 # -----------------------
 # Temporary folders

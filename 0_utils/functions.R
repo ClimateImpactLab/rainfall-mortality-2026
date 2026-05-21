@@ -3,50 +3,195 @@
 #'
 #========================================================================================#
 
-#' function to generate weights and convert interacted variables to factors 
+#' Load the Carleton et al 2022 mortality panel, cleaned and regression-ready.
+#' When load_cleaned = TRUE, reads a cached parquet file (fast).
+#' When load_cleaned = FALSE, reads the raw .dta, runs all cleaning steps,
+#' and optionally writes the cache for next time.
+#'
+#' @usage
+#' # First time (slow — reads .dta, cleans, writes cache):
+#' df <- load_mortality_data(CARLETON_2022_DATA_DIR, load_cleaned = FALSE,
+#'                           cache_path = "data/mortality_clean.parquet")
+#'
+#' # Subsequent runs (fast — reads cached parquet):
+#' df <- load_mortality_data(CARLETON_2022_DATA_DIR, load_cleaned = TRUE,
+#'                           cache_path = "data/mortality_clean.parquet")
+#'
+#' @param data_dir      Carleton et al 2022 data root, e.g. CARLETON_2022_DATA_DIR
+#'                      from paths.R.
+#' @param load_cleaned  If TRUE, read from cached parquet. If FALSE, rebuild
+#'                      from the raw .dta file.
+#' @param cache_path    Path to the cached parquet file. Set to NULL to skip
+#'                      reading/writing the cache entirely.
+#' @return A regression-ready tibble.
+load_mortality_data <- function(data_dir,
+                                load_cleaned = TRUE,
+                                cache_path = NULL) {
+
+  # if cached file exists and load_cleaned is TRUE, read and return
+
+  if (load_cleaned && !is.null(cache_path) && file.exists(cache_path)) {
+    message("Reading cached clean panel from: ", cache_path)
+    return(arrow::read_parquet(cache_path))
+  }
+
+  if (load_cleaned && !is.null(cache_path) && !file.exists(cache_path)) {
+    message("Cache not found at: ", cache_path,
+            "\nRebuilding from raw .dta file...")
+  }
+
+  # --- read raw dta ---------------------------------------------------------
+  message("Reading raw .dta file (this may take a few minutes)...")
+  df <- haven::read_dta(
+    glue::glue(data_dir,
+               "0_data_cleaning/3_final/global_mortality_panel.dta")
+  )
+
+  # drop unused column families
+  df <- df %>%
+    select(-contains("BEST"),
+           -contains("Spline"),
+           -contains("bins"),
+           -contains("rcs"),
+           -contains("cdd"),
+           -contains("hdd"),
+           -contains("UDEL"),
+           -contains("13"),
+           -contains("tmax"))
+
+  # --- prep_data steps (formerly sourced from prep_data.R) -------------------
+
+  # filter to estimation sample
+  df <- df %>%
+    filter(year <= 2010, agegroup != 0)
+
+  # winsorize deathrate within country-agegroup
+  df <- df %>%
+    group_by(iso, agegroup) %>%
+    mutate(deathrate_w99 = pmin(deathrate,
+                                quantile(deathrate, 0.99,
+                                         na.rm = TRUE, type = 2))) %>%
+    ungroup()
+
+  # restrict to complete cases
+  df <- df %>%
+    filter(!is.na(deathrate_w99),
+           !is.na(tavg_poly_1_GMFD),
+           !is.na(prcp_poly_1_GMFD),
+           !is.na(loggdppc_adm1_avg),
+           !is.na(lr_tavg_GMFD_adm1_avg))
+
+  # clean up IDs
+  df <- df %>%
+    mutate(adm2_id = if_else(iso == "JPN", adm1_id, adm2_id)) %>%
+    group_by(iso) %>%
+    mutate(adm0_code = cur_group_id()) %>%
+    group_by(iso, adm1_id) %>%
+    mutate(adm1_code = cur_group_id()) %>%
+    group_by(iso, adm1_id, adm2_id) %>%
+    mutate(adm2_code = cur_group_id()) %>%
+    group_by(iso, agegroup) %>%
+    mutate(adm0_agegrp_code = cur_group_id()) %>%
+    group_by(iso, adm1_id, agegroup) %>%
+    mutate(adm1_agegrp_code = cur_group_id()) %>%
+    ungroup()
+
+  # assign EU countries same adm0_code
+  df <- df %>%
+    mutate(adm0_code2 = 41,
+           adm0_code2 = case_when(
+             adm0_code == 4 ~ 4,   # BRA
+             adm0_code == 6 ~ 6,   # CHL
+             adm0_code == 7 ~ 7,   # CHN
+             adm0_code == 15 ~ 15, # FRA
+             adm0_code == 23 ~ 23, # JPN
+             adm0_code == 27 ~ 27, # MEX
+             adm0_code == 40 ~ 40  # USA
+           ),
+           iso2 = iso,
+           iso2 = ifelse(adm0_code2 == 41, "EUR", iso),
+           CHN_ts = 1,
+           CHN_ts = ifelse(year >= 2004 & iso == "CHN", 2, CHN_ts))
+
+  # --- steps formerly in run_regressions.R lines 51-53 ----------------------
+
+  # strip _GMFD suffix from column names
+  names(df) <- stringr::str_remove_all(names(df), "_GMFD")
+
+  # generate weights and log deathrate
+  df <- get_weights(df) %>%
+    mutate(log_deathrate_w99 = log(deathrate_w99))
+
+  # --- cache the result ------------------------------------------------------
+  if (!is.null(cache_path)) {
+    dir.create(dirname(cache_path), showWarnings = FALSE, recursive = TRUE)
+    arrow::write_parquet(df, cache_path)
+    message("Cached clean panel to: ", cache_path)
+  }
+
+  df
+}
+
+#' function to generate weights and convert agegroup to factor
 #' for regressions using data from Carleton et al 2022.
+#' Factor conversion of the precip-interaction variable (if any) is handled
+#' inside `fit_response`, since that's where the choice of variable lives.
 get_weights <- function(df){
   df %>%
     group_by(year, agegroup) %>%
     mutate(tot_pop = sum(population, na.rm = TRUE)) %>%
     ungroup() %>%
     mutate(weight = population/tot_pop, # generate weights
-           agegroup = as.factor(agegroup), # convert to factor for feols
-           adm0_code = as.factor(adm0_code)) # convert to factor for feols
+           agegroup = as.factor(agegroup)) # convert to factor for feols
 }
 
 #' Fit a Carleton-style polynomial regression.
 #' tavg_order / prcp_order: 0 to skip that block, otherwise the polynomial order.
-#' country_prcp: TRUE -> adm0_code × prcp_poly_k × agegroup interactions
-#'               FALSE -> prcp_poly_k × agegroup only
+#' interact_var: NULL  -> prcp_poly_k × agegroup only
+#'               "col" -> col × prcp_poly_k × agegroup interactions, where
+#'                       "col" is any categorical column in `data`
+#'                       (e.g. "adm0_code", "adm1_id", "climate_zone").
+#' Note: `fe` defaults assume a country-style design. When changing
+#' `interact_var`, you'll usually want to pass an `fe` that matches the new
+#' grouping (e.g. drop `adm0_code^year^agegroup` for adm1-level interactions).
 fit_response <- function(data,
                          lhs = "deathrate_w99",
                          tavg_order,
                          prcp_order,
-                         country_prcp = FALSE,
+                         interact_var = NULL,
                          log_mort = FALSE,
                          fe = c("adm2_code^CHN_ts^agegroup",
                                 "adm0_code^year^agegroup"),
                          weights = ~weight,
                          cluster = ~adm1_code,
                          ...) {
-  
+
+  # ensure the interaction variable is a factor so feols treats it as categorical
+  if (!is.null(interact_var)) {
+    if (!interact_var %in% names(data)) {
+      stop("interact_var '", interact_var, "' not found in data")
+    }
+    if (!is.factor(data[[interact_var]])) {
+      data[[interact_var]] <- as.factor(data[[interact_var]])
+    }
+  }
+
   # build rhs
   rhs <- character() # initialize an empty character vector to hold all terms
-  
+
   # create the temperature polynomial only when tavg order is more than zero
   if (tavg_order > 0) {
     rhs <- c(rhs, paste0("i(agegroup, tavg_poly_", seq_len(tavg_order), ")"))
   }
-  
+
   # create the precipitation polynomial only when precip order is more than zero
   if (prcp_order > 0) {
-    # create different precip terms based on if country_prcp is TRUE/FALSE
-    rhs <- c(rhs, if (country_prcp){
-      paste0("adm0_code:prcp_poly_", seq_len(prcp_order), ":agegroup")
-      } else {
-        paste0("i(agegroup, prcp_poly_", seq_len(prcp_order), ")")
-        })
+    # create different precip terms based on whether interact_var is set
+    rhs <- c(rhs, if (!is.null(interact_var)) {
+      paste0(interact_var, ":prcp_poly_", seq_len(prcp_order), ":agegroup")
+    } else {
+      paste0("i(agegroup, prcp_poly_", seq_len(prcp_order), ")")
+    })
   }
   
   # create the formula for feols
@@ -64,23 +209,26 @@ fit_response <- function(data,
 }
 
 #' Coefficient-name template that matches what `fit_response` produces.
-#' Picks the right naming convention based on `country`. 
-#' country: TRUE -> no pattern in names due to triple interaction 
-#'          FALSE -> names in consistent pattern
+#' Picks the right naming convention based on `interact_var`.
+#' interact_var: NULL  -> consistent `agegroup::X:prefixK` pattern
+#'               "col" -> token-match against the fitted coefficient names,
+#'                       expecting tokens like "<col><level>", "agegroup<lvl>"
+#'                       and "<prefix><k>". The `groups` tibble passed to
+#'                       `build_response` must contain a column named `col`.
 #' prefix: prcp_poly_ or tavg_poly_
-make_coef_names <- function(prefix, country = FALSE, fit = NULL) {
+make_coef_names <- function(prefix, interact_var = NULL, fit = NULL) {
 
-  if (country) {
+  if (!is.null(interact_var)) {
     if (is.null(fit)) {
-      stop("country = TRUE needs `fit` to look up coefficient names from the fitted model")
+      stop("interact_var requires `fit` to look up coefficient names from the fitted model")
     }
     cn <- names(coef(fit)) # collect feols coefficient names
     cn_tok <- strsplit(cn, ":", fixed = TRUE) # split them by colon
-    
+
     # a function of group (g) and polynomial (k) order that returns coefficient name
     function(g, k) {
       # build the set of expected tokens in the coefficient name
-      want <- c(paste0("adm0_code", g$adm0_code),
+      want <- c(paste0(interact_var, g[[interact_var]]),
                 paste0("agegroup",  g$agegroup),
                 paste0(prefix, k))
       # check whether there's a matching token and find the indices where the match is true
