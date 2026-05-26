@@ -28,10 +28,13 @@ mortality_data <-
   get_weights() %>%
   mutate(log_deathrate_w99 = log(deathrate_w99)) 
 
+# prep mortality for merge with GHSL data
 mortality_data <- mortality_data %>%
   mutate(iso2 = if_else(is.na(iso2), "EU", iso2), # add iso value for EU
          year_5s = round(year / 5) * 5, # column for every fifth year like in GHSL data
-         year_5s = if_else(year_5s < 1975, 1975, year_5s)) # GHSL data starts in 1975 
+         year_5s = if_else(year_5s < 1975, 1975, year_5s), # GHSL data starts in 1975 
+         adm1_id = if_else(iso2 == "CHL", str_pad(adm1_id, width = 2, pad = "0"), adm1_id), # add leading zero to adm1 code in Chile
+         adm2_id = if_else(iso2 == "JPN", NA, adm2_id)) # remove adm2 code from Japan
 
 # Load admin urbanisation data
 urban <- paste0(DATA_DIR, 
@@ -131,8 +134,9 @@ if(make_eda_plots){
 
 # Regression ---------------------------
 
-# @Nishka: - there are some missing values, not sure why that is?
-df %>% filter(is.na(urban_share))
+df %>% 
+  filter(is.na(urban_share)) %>%
+  select(adm0, adm1, adm1_id, adm2, adm2_id, year, year_5s, agegroup, urban_share)
 
 agegroups <-  levels(df$agegroup)
 
