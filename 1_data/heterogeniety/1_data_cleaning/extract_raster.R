@@ -45,7 +45,11 @@ smod_stack <- load_ghsl_stack(rast_path, "SMOD", na_flag = -200)
 extract_ghsl <- function(shp_path, iso, shp_name, stack1, stack2) {
   
   # read shapefile
-  adm2_shp <- st_read(glue("{shp_path}/{iso}/Shapefile/{shp_name}"))
+  if (iso == "MEX") {
+    adm2_shp <- st_read(glue("{shp_path}/{iso}/Shapefile/harmonized/{shp_name}"))
+  } else {
+    adm2_shp <- st_read(glue("{shp_path}/{iso}/Shapefile/{shp_name}"))
+  }
   
   # extract total population
   result_stack1  <- exact_extract(stack1, adm2_shp, "sum")
@@ -88,10 +92,11 @@ extract_ghsl <- function(shp_path, iso, shp_name, stack1, stack2) {
 # list of countries: EU, BRA, CHL, CHN, FRA, JPN, MEX, USA
 shp_input <- "/project/cil/norgay/Global_ACP/MORTALITY/Replication_2018/2_Data/Raw/Countries/"
 # lists of all ISO names and shapefile names 
-iso_list <- c("EU", "BRA", "CHL", "CHN", "FRA", "JPN", "USA") # figure out what's going on with Mexico's shapefile before including
+iso_list <- c("EU", "BRA", "CHL", "CHN", "FRA", "JPN", "USA", "MEX")
 shp_list <- c("NUTS2_RG_60M_2013_mortality.shp", "BRA_adm2.shp",
-                   "cl_comunas_geo_mortality_adm2.shp", "china00.shp",
-                   "FRA_adm2.shp", "JPN_adm1.shp", "tl_2016_us_county_mortality.shp")
+              "cl_comunas_geo_mortality_adm2.shp", "china00.shp",
+              "FRA_adm2.shp", "JPN_adm1.shp", "tl_2016_us_county_mortality.shp",
+              "boundaries_4795_IPUMS_MX_HSLAD_1990_2015.shp")
 
 # apply the function
 results <- map2(iso_list, shp_list, 
@@ -131,13 +136,20 @@ results$FRA <- results$FRA %>%
   mutate(across(contains("ID"), as.character))
 
 results$JPN <- results$JPN %>%
-  mutate(ID_2 = "",
+  mutate(ID_2 = NA_character_,
          iso2 = "JPN") %>% # mortality data for Japan is at ADM1 level
   select(iso2, ID_1, ID_2, starts_with("sum"), starts_with("majority"), starts_with("urban_share_")) %>%
   mutate(across(contains("ID"), as.character))
 
 results$USA <- results$USA %>%
   mutate(iso2 = "USA") %>%
+  select(iso2, ID_1, ID_2, starts_with("sum"), starts_with("majority"), starts_with("urban_share_")) %>%
+  mutate(across(contains("ID"), as.character))
+
+results$MEX <- results$MEX %>%
+  mutate(ID_1 = str_sub(GEOID, 5, 6),
+         iso2 = "MEX") %>% # NUTS_1 ID is first three characters from NUTS_2 ID
+  rename(ID_2 = GEOID) %>% 
   select(iso2, ID_1, ID_2, starts_with("sum"), starts_with("majority"), starts_with("urban_share_")) %>%
   mutate(across(contains("ID"), as.character))
 
