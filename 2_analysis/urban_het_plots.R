@@ -12,16 +12,11 @@ library(stringr)
 theme_set(theme_classic())
 
 # set paths
-USER <- Sys.getenv("USER")
-root <- "/home/tbearpark" # "/project/cil/home_dirs/{USER}/"
-setwd(paste0(root, "/repos/rainfall-mortality-2026/"))
-
-source("0_utils/paths.R")
-source("0_utils/functions.R")
+USER = Sys.getenv("USER")
+source(glue("/project/cil/home_dirs/{USER}/repos/rainfall-mortality-2026/0_utils/paths.R"))
+source(glue("/project/cil/home_dirs/{USER}/repos/rainfall-mortality-2026/0_utils/functions.R"))
 
 # LOAD DATA ---------------------------
-
-# load main dataset
 mortality_data <- 
   paste0(DATA_DIR, "/cleaned/global_rainfall-mortality_panel.csv") %>% 
   read_csv() %>% 
@@ -55,6 +50,7 @@ df <- left_join(mortality_data, urban_long,
                 by = c("iso2", "adm1_id"="ID_1","adm2_id"="ID_2", "year_5s" = "year"))
 
 # EDA PLOTS ---------------------------
+## histograms ---------------------------
 make_eda_plots <- FALSE
 if(make_eda_plots){
   urban_long %>%
@@ -72,7 +68,7 @@ if(make_eda_plots){
          y = "number of observations") +
     theme_classic()
   # ggsave(glue(DIR_FIGURE, "/ghsl/iso_hist.png"), width = 14, height = 3)
-    
+  
   urban_long %>%
     filter(settlement_type != 10) %>%
     ggplot() + 
@@ -91,8 +87,8 @@ if(make_eda_plots){
   
   urban_long %>%
     mutate(urban_decile = cut(urban_share, 
-                                    breaks = seq(0, 100, by = 10), 
-                                    include.lowest = TRUE)) %>%
+                              breaks = seq(0, 100, by = 10), 
+                              include.lowest = TRUE)) %>%
     ggplot() + 
     facet_grid(rows = vars(iso2), cols = vars(year), scales = "free_y") + 
     geom_histogram(aes(x = urban_share, fill = urban_decile), bins = 25) +
@@ -108,29 +104,9 @@ if(make_eda_plots){
       axis.text = element_text(size = 10)
     )
   # ggsave(glue(DIR_FIGURE, "/ghsl/pct_urban_pop.png"), width = 18, height = 9)
-  
-  # check how to display proportion of admin units on y-axis
-  urban_long %>%
-    mutate(urban_decile = cut(urban_share, 
-                              breaks = seq(0, 100, by = 10), 
-                              include.lowest = TRUE)) %>%
-    ggplot() + 
-    facet_grid(rows = vars(iso2), cols = vars(year), scales = "free_y") + 
-    geom_histogram(aes(x = urban_share, fill = urban_decile, y = after_stat(count/sum(count))), bins = 25) +
-    # scale_y_continuous(labels = percent_format()) +
-    scale_fill_manual(values = met.brewer("Hokusai3", 10)) +
-    labs(fill = "most common land use type in adm unit",
-         x = "percent of population in urban areas", 
-         y = "number of observations") +
-    theme_minimal() +
-    theme(
-      strip.text = element_text(face = "bold", size = 14),
-      axis.line.x = element_line(color = "black"),
-      axis.title = element_text(size = 14),
-      axis.text = element_text(size = 10)
-    )
 }
-# should add some maps and time series...
+
+## maps ---------------------------
 # mapping libraries
 library(sf)
 library(purrr)
@@ -155,7 +131,7 @@ shp_list <- c("NUTS2_RG_60M_2013_mortality.shp", "BRA_adm2.shp",
               "boundaries_4795_IPUMS_MX_HSLAD_1990_2015.shp")
 
 shapefiles <- map2(iso_list, shp_list, 
-                ~read_shp(shp_input, .x, .y))
+                   ~read_shp(shp_input, .x, .y))
 
 names(shapefiles) <- iso_list
 
@@ -208,24 +184,8 @@ shapefiles$MEX <- shapefiles$MEX %>%
 
 all_countries <- bind_rows(shapefiles)
 
+# plot
 urban_map_df <- left_join(urban_long, all_countries, by = c("iso2", "ID_1", "ID_2"))
-
-urban_map_df %>%
-  st_as_sf() %>%
-  mutate(urban_decile = cut(urban_share, 
-                            breaks = seq(0, 100, by = 10), 
-                            include.lowest = TRUE)) %>%
-  ggplot() + 
-  facet_grid(rows = vars(iso2), cols = vars(year)) + 
-  coord_sf(lims_method = "geometry_bbox") +
-  geom_sf(aes(fill = urban_decile), color = "black", lwd = 0.05) +
-  scale_fill_manual(values = met.brewer("Hokusai3", 10)) +
-  labs(fill = "percent range") +
-  theme_minimal() +
-  theme(
-    strip.text = element_text(face = "bold", size = 14)
-  )
-ggsave(glue(DIR_FIGURE, "/ghsl/map_urban_pop.png"), width = 18, height = 9)
 
 country_plots <- map(unique(urban_map_df$iso2), function(iso) {
   p <- urban_map_df %>%
@@ -260,105 +220,3 @@ country_plots <- map(unique(urban_map_df$iso2), function(iso) {
 walk2(country_plots, unique(urban_map_df$iso2), function(plot, iso) {
   ggsave(glue("{DIR_FIGURE}/ghsl/map_urban_pop_{iso}.png"), plot, width = 21, height = 6)
 })
-
-
-# Regression ---------------------------
-
-df %>% 
-  filter(is.na(urban_share)) %>%
-  select(adm0, adm1, adm1_id, adm2, adm2_id, year, year_5s, agegroup, urban_share)
-
-agegroups <-  levels(df$agegroup)
-
-# 1. Baseline reg for comparison
-fit_a <- fit_response(df, tavg_order = 4, prcp_order = 2,
-                      fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"), 
-                      log_mort = TRUE)
-key_a <- make_coef_names("prcp_poly_")
-rf_a  <- build_response(fit_a, x = 0:300, poly_order = 2,
-                        groups = tibble(agegroup = agegroups),
-                        key = key_a, id = "Precip")
-
-p_a <- plot_response(rf_a, color = "agegroup",
-                     xlab = "Precipitation",
-                     ylab = "Δ deathrate (baseline)")
-p_a
-
-# 2. Simplest urban-het first attempt: cut into binary variable: 
-hist(df$urban_share)
-quantile(df$urban_share, na.rm=T, seq(0, 1, 0.1))
-
-df <- df %>% 
-  mutate(urban = as.factor(if_else(urban_share > 0, "urban", "rural")))
-
-# Urban split
-urban_groups <-  levels(df$urban)
-fit_urban <- fit_response(df, tavg_order = 4, prcp_order = 2,
-                      interact_var = "urban",
-                      fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"), 
-                      log_mort=TRUE)
-etable(fit_urban)
-key_urban <- make_coef_names("prcp_poly_", interact_var = "urban", fit = fit_urban)
-
-rf_urban  <- build_response(
-  fit_urban, x = 0:300, poly_order = 2,
-  groups = tidyr::crossing(agegroup = agegroups,
-                           urban = urban_groups),
-  key = key_urban, id = "Precip")
-
-p_urban <- plot_response(rf_urban, color = "agegroup", facet = "urban",
-                     xlab = "Precipitation",
-                     ylab = "Δ deathrate (× urban)",
-                     scales = "fixed")
-p_urban
-
-# 3. Income * urban group - issue with NA here
-hist(df$gdppc_adm1_avg)
-quantile(df$gdppc_adm1_avg, na.rm=T, seq(0, 1, 0.1))
-df <- df %>%
-  mutate(inc = as.factor(if_else(gdppc_adm1_avg > 20000, "rich", "poor")))
-df$group <- as.factor(paste0(df$urban, "_", df$inc))
-table(df$group)
-
-group_levels <- levels(df$group)
-
-fit_inc_urban <- fit_response(df, tavg_order = 4, prcp_order = 2,
-                          interact_var = "group",
-                          fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"), 
-                          log_mort=TRUE)
-etable(fit_inc_urban)
-key_inc_urban <- make_coef_names("prcp_poly_", interact_var = "group", fit = fit_inc_urban)
-
-rf_fit_inc_urban  <- build_response(
-  fit_inc_urban, x = 0:300, poly_order = 2,
-  groups = tidyr::crossing(agegroup = agegroups,
-                           group = group_levels),
-  key = key_inc_urban, id = "Precip")
-
-# Remove NA cells - need to come back to this.
-rf_fit_inc_urban <- rf_fit_inc_urban %>% filter(!stringr::str_detect(group, "NA"))
-p_group <- plot_response(rf_fit_inc_urban, color = "agegroup", facet = "group",
-                         xlab = "Precipitation",
-                         ylab = "Δ deathrate (× urban)",
-                         scales = "fixed")
-p_group
-
-df %>% 
-  ggplot() + geom_point(aes(x = urban_share, y = gdppc_adm1_avg, color = group))
-
-rf_fit_inc_urban %>% 
-  filter(x %in% c(100, 200, 300)) %>% 
-  mutate(x = paste0(x, 'mm')) %>% 
-  ggplot() + 
-  geom_hline(yintercept=0, color = 'grey') + 
-  geom_point(aes(x = group, y = dy, color= agegroup), 
-             position = position_dodge(width = .5))  + 
-  geom_errorbar(aes(x = group, ymin = lo, ymax= hi, color= agegroup), 
-                position = position_dodge(width = .5)) + 
-  ylab("Proportion") + 
-  facet_wrap(~x)
-  
-
-
-
-

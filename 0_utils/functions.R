@@ -11,11 +11,11 @@
 #' @usage
 #' # First time (slow — reads .dta, cleans, writes cache):
 #' df <- load_mortality_data(CARLETON_2022_DATA_DIR, load_cleaned = FALSE,
-#'                           cache_path = "data/mortality_clean.parquet")
+#'                           cache_path = file.path(DATA_DIR, "cleaned", "mortality_clean.parquet"))
 #'
 #' # Subsequent runs (fast — reads cached parquet):
 #' df <- load_mortality_data(CARLETON_2022_DATA_DIR, load_cleaned = TRUE,
-#'                           cache_path = "data/mortality_clean.parquet")
+#'                           cache_path = file.path(DATA_DIR, "cleaned", "mortality_clean.parquet"))
 #'
 #' @param data_dir      Carleton et al 2022 data root, e.g. CARLETON_2022_DATA_DIR
 #'                      from paths.R.
@@ -23,10 +23,12 @@
 #'                      from the raw .dta file.
 #' @param cache_path    Path to the cached parquet file. Set to NULL to skip
 #'                      reading/writing the cache entirely.
+#' @param urban_het     If TRUE, prep mortality to merge with GHSL data                    
 #' @return A regression-ready tibble.
 load_mortality_data <- function(data_dir,
                                 load_cleaned = TRUE,
-                                cache_path = NULL) {
+                                cache_path = NULL,
+                                urban_het = TRUE) {
 
   # if cached file exists and load_cleaned is TRUE, read and return
 
@@ -109,7 +111,7 @@ load_mortality_data <- function(data_dir,
              adm0_code == 40 ~ 40  # USA
            ),
            iso2 = iso,
-           iso2 = ifelse(adm0_code2 == 41, "EUR", iso),
+           iso2 = ifelse(adm0_code2 == 41, "EU", iso),
            CHN_ts = 1,
            CHN_ts = ifelse(year >= 2004 & iso == "CHN", 2, CHN_ts))
 
@@ -121,6 +123,15 @@ load_mortality_data <- function(data_dir,
   # generate weights and log deathrate
   df <- get_weights(df) %>%
     mutate(log_deathrate_w99 = log(deathrate_w99))
+  
+  if (urban_het) {
+    df %>%
+      mutate(iso2 = if_else(is.na(iso2), "EU", iso2), # add iso value for EU
+             year_5s = round(year / 5) * 5, # column for every fifth year like in GHSL data
+             year_5s = if_else(year_5s < 1975, 1975, year_5s), # GHSL data starts in 1975 
+             adm1_id = if_else(iso2 == "CHL" | iso2 == "MEX", str_pad(adm1_id, width = 2, pad = "0"), adm1_id), # add leading zero to adm1 code in Chile and Mexico
+             adm2_id = if_else(iso2 == "JPN", NA, adm2_id)) # remove adm2 code from Japan
+  }
 
   # --- cache the result ------------------------------------------------------
   if (!is.null(cache_path)) {
@@ -335,6 +346,6 @@ plot_response <- function(rf_data, color = "agegroup", facet = NULL,
           plot.title = element_text(size = 16, face = "bold"),
           strip.text = element_text(size = 12)) +
   guides(fill = "none")
-  if (!is.null(facet)) p <- p + facet_wrap(facet, scales = scales)
+  if (!is.null(facet)) p <- p + facet_wrap(facet, ncol = 5, scales = scales)
   p
 }
