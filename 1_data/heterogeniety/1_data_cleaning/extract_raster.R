@@ -159,37 +159,3 @@ all_countries <- bind_rows(results)
 # output cleaned data
 write_csv(all_countries, glue(DATA_DIR, "/heterogeniety_data/ghsl/cleaned/ghsl_pop_landuse_popshare.csv"))
 
-#------------------ TEST CODE --------------------
-# # test on one year
-# pop75 <- rast("/project/cil/gcp/estimation/rainfall-mortality/heterogeniety_data/ghsl/data/GHS_POP_E1975_GLOBE_R2023A_4326_30ss_V1_0/GHS_POP_E1975_GLOBE_R2023A_4326_30ss_V1_0.tif")
-
-# # stack population and urbanization rasters
-# pop_files  <- list.files("/project/cil/gcp/estimation/rainfall-mortality/heterogeniety_data/ghsl/data/", 
-#                          pattern = "GHS_POP.*\\.tif$",  
-#                          full.names = TRUE, 
-#                          recursive = TRUE) %>% sort() # arrange file names chronologically
-# smod_files <- list.files("/project/cil/gcp/estimation/rainfall-mortality/heterogeniety_data/ghsl/data/",
-#                          pattern = "GHS_SMOD.*\\.tif$", 
-#                          full.names = TRUE, 
-#                          recursive = TRUE) %>% sort() # arrange file names chronologically
-# # read the rasters
-# pop_stack  <- rast(pop_files)
-# smod_stack <- rast(smod_files)
-# 
-# # clean column names
-# years <- seq(1975, 2030, by = 5)
-# names(pop_stack)  <- glue("pop_{years}")
-# names(smod_stack) <- glue("smod_{years}")
-
-# # test on one country
-# us_county_shp <- st_read("/project/cil/norgay/Global_ACP/MORTALITY/Replication_2018/2_Data/Raw/Countries/USA/Shapefile/tl_2016_us_county_mortality.shp")
-# 
-# result_pop <- exact_extract(pop_stack, us_county_shp, "sum")
-# result_smod <- exact_extract(smod_stack, us_county_shp, "weighted_mean", weights = pop_stack)
-# 
-# us_pop <- us_county_shp %>%
-#   st_drop_geometry() %>%  # drop the geometry column
-#   bind_cols(result_pop) %>%
-#   bind_cols(result_smod)
-
-
