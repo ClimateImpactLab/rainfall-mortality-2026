@@ -1,6 +1,13 @@
 # setup paths for R
 # if first-time user, ensure these paths correspond to your code repo and input data
-REPO = paste0("/project/cil/home_dirs/", USER, "/repos")
+
+print(USER)
+if(USER == "tbearpark"){
+  REPO <- "~/repos/"
+}else{
+  REPO = paste0("/project/cil/home_dirs/", USER, "/repos")  
+}
+
 
 # carleton et al 2022 data directory
 CARLETON_2022_DATA_DIR = "/project/cil/battuta_shares/gcp/estimation/mortality/release_2020/data/"
