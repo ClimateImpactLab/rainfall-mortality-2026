@@ -1,9 +1,6 @@
-#packages = c("tidyr", "ggplot2", "dplyr", "readr", "glue", "scales", "stringr", "fixest", "haven")
-
 # Minimal package loading
 library(dplyr)
 library(tidyr)
-library(fixest)
 library(ggplot2)
 library(readr)
 library(RColorBrewer)
@@ -13,24 +10,11 @@ theme_set(theme_classic())
 
 # set paths
 USER = Sys.getenv("USER")
-source(glue("/project/cil/home_dirs/{USER}/repos/rainfall-mortality-2026/0_utils/paths.R"))
-source(glue("/project/cil/home_dirs/{USER}/repos/rainfall-mortality-2026/0_utils/functions.R"))
+setwd(this.path::this.dir())
+source("../0_utils/paths.R")
+source("../0_utils/functions.R")
 
 # LOAD DATA ---------------------------
-mortality_data <- 
-  paste0(DATA_DIR, "/cleaned/global_rainfall-mortality_panel.csv") %>% 
-  read_csv() %>% 
-  get_weights() %>%
-  mutate(log_deathrate_w99 = log(deathrate_w99)) 
-
-# prep mortality for merge with GHSL data
-mortality_data <- mortality_data %>%
-  mutate(iso2 = if_else(is.na(iso2), "EU", iso2), # add iso value for EU
-         year_5s = round(year / 5) * 5, # column for every fifth year like in GHSL data
-         year_5s = if_else(year_5s < 1975, 1975, year_5s), # GHSL data starts in 1975 
-         adm1_id = if_else(iso2 == "CHL" | iso2 == "MEX", str_pad(adm1_id, width = 2, pad = "0"), adm1_id), # add leading zero to adm1 code in Chile and Mexico
-         adm2_id = if_else(iso2 == "JPN", NA, adm2_id)) # remove adm2 code from Japan
-
 # Load admin urbanisation data
 urban <- paste0(DATA_DIR, 
                 "/heterogeniety_data/ghsl/cleaned/", 
@@ -44,10 +28,6 @@ urban_long <- urban %>%
   mutate(year = as.double(year)) %>%
   rename(population = sum.POP,
          settlement_type = majority.SMOD)
-
-# Join
-df <- left_join(mortality_data, urban_long, 
-                by = c("iso2", "adm1_id"="ID_1","adm2_id"="ID_2", "year_5s" = "year"))
 
 # EDA PLOTS ---------------------------
 ## histograms ---------------------------
