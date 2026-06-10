@@ -22,16 +22,18 @@ df <- read_csv(file.path(DATA_DIR, "mortality", "merge", "ghsl_mortality_merged.
 
 # Regression ---------------------------
 ## 0. Replicate main specification from Carleton et al 2022 -----------------------
-agespec_response_spec2 <- fit_response(data = mortality_data,
+agespec_response_spec2 <- fit_response(data = df,
                                        tavg_order = 4,
                                        prcp_order = 2,
                                        interact_var = "adm0_code")
 
 ## 1. Baseline reg for comparison--------------------
+df$agegroup <- as.factor(df$agegroup)
 agegroups <- levels(df$agegroup)
 
 fit_a <- fit_response(df, tavg_order = 2, prcp_order = 2,
                       fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"), 
+                      weights = ~weight,
                       log_mort = TRUE)
 key_a <- make_coef_names("prcp_poly_")
 rf_a  <- build_response(fit_a, x = 0:300, poly_order = 2,
@@ -44,34 +46,33 @@ p_a <- plot_response(rf_a, color = "agegroup",
 p_a
 
 # 1.1 Check precip order importance in baseline reg
-prcp_orders <- c(2, 3, 4)
+prcp_orders <- c(2:4)
 
-rf.poly <- 
-  map_dfr(
-    prcp_orders, 
-    function(prcp_order){
-      print(paste0("==== running precip poly ", prcp_order, " ======="))
-      fit <- fit_response(df, tavg_order = 2, prcp_order = prcp_order,
-                          fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"),
-                          log_mort = TRUE)
-      
-      key <- make_coef_names("prcp_poly_")
-      
-      build_response(fit, x = 0:300, poly_order = prcp_order,
-                     groups = tibble(agegroup = agegroups),
-                     key = key, id = "Precip") %>% 
-        mutate(precip_poly = prcp_order)
-    }
-  )  %>% 
+rf.poly <- map_dfr(prcp_orders, function(prcp_order){
+  
+  print(paste0("==== running precip poly ", prcp_order, " ======="))
+  
+  fit <- fit_response(df, tavg_order = 2, prcp_order = prcp_order,
+                      fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"),
+                      weights = ~weight,
+                      log_mort = TRUE)
+  
+  key <- make_coef_names("prcp_poly_")
+  
+  build_response(fit, x = 0:300, poly_order = prcp_order,
+                 groups = tibble(agegroup = agegroups),
+                 key = key, id = "Precip") %>% 
+    mutate(precip_poly = prcp_order)
+  })  %>% 
   mutate(precip_poly = as.factor(precip_poly))
 
 rf.poly %>% 
-  plot_response(color = "precip_poly", facet = "agegroup",
+  plot_response(color = "agegroup", facet = "precip_poly",
                 xlab = "Precipitation",
                 ylab = "Δ deathrate",
                 scales = "fixed")
 
-# 2. Urban split ----------------------------------------------------
+## 2. Urban split ----------------------------------------------------
 # default to poly 3 precip, poly 2 temp
 
 # hist(df$urban_share)
@@ -84,15 +85,14 @@ rf.poly %>%
 #' @param x          precip values to evaluate the curve at.
 #' @param fe         fixed-effects spec passed to fit_response.
 #' @param log_mort   TRUE -> fepois, FALSE -> feols.
-#' @param agegroups  age-group levels to cross with (defaults to df's levels).
 #' @param id         label stored in the `id` column of the output.
 #' @return response-curve tibble; fitted model attached as attr(rf, "fit").
 urban_rf <- function(df, n,
                      prcp_order = 3, tavg_order = 2,
                      x = 0:300,
                      fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"),
+                     weights = ~weight,
                      log_mort = TRUE,
-                     agegroups = levels(df$agegroup),
                      id = "Precip") {
   
   if (!"urban_share" %in% names(df)) {
@@ -100,17 +100,22 @@ urban_rf <- function(df, n,
   }
   
   # Create urban bins
-  breaks <- seq(0, 100, length.out = n + 1)
+  breaks <- seq(0, 100, length.out = n + 1) # create evenly spaced breaks
   df <- df %>%
     mutate(
       urban_bin = cut(urban_share, breaks = breaks,
-        include.lowest = TRUE, ordered_result = TRUE)
+                      include.lowest = TRUE, ordered_result = TRUE)
     )
   
   urban_groups <- levels(df$urban_bin)
+  agegroups <- levels(df$agegroup)
   
-  fit <- fit_response(df, tavg_order = tavg_order, prcp_order = prcp_order,
-                      interact_var = "urban_bin", fe = fe, log_mort = log_mort)
+  fit <- fit_response(df, 
+                      tavg_order = tavg_order, prcp_order = prcp_order,
+                      interact_var = "urban_bin", 
+                      fe = fe, 
+                      weights = weights,
+                      log_mort = log_mort)
   
   key <- make_coef_names("prcp_poly_", interact_var = "urban_bin", fit = fit)
   
@@ -118,10 +123,7 @@ urban_rf <- function(df, n,
     fit,
     x = x,
     poly_order = prcp_order,
-    groups = tidyr::crossing(
-      agegroup = agegroups,
-      urban_bin = urban_groups
-    ),
+    groups = tidyr::crossing(agegroup = agegroups, urban_bin = urban_groups),
     key = key,
     id = id
   ) %>%
@@ -132,6 +134,8 @@ urban_rf <- function(df, n,
   
   rf
 }
+
+### 2.1 change the number of urban share bins -----------------------
 
 rf.urban <- map_dfr(c(2:5), function(NN) urban_rf(df, NN)) %>% 
   mutate(bins = as.factor(bins))
@@ -148,13 +152,35 @@ rf.urban %>%
   ylab("Proportion") + 
   facet_wrap(~agegroup+bins, nrow=3)
 
-# rf.urban %>% 
-#   plot_response(color = NA, facet = c("urban_bin, agegroup"),
+# rf.urban %>%
+#   plot_response(color = "agegroup", facet = c("urban_bin"),
 #                 xlab = "Precipitation",
 #                 ylab = "Δ deathrate",
 #                 scales = "fixed")
 
-# 3. Income * urban group - issue with NA here ---------------------
+### 2.1 try with different fixed effects and regression weights -----------
+# fixed effects options from from Carleton et al 2022
+spec1 <- c("adm2_code^agegroup", "adm0_code^year")
+spec2 <- c("adm2_code^agegroup", "adm0_code^year^agegroup") # main specification
+spec3 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_agegrp_code^year")
+
+# create all combinations of urban share bins, fixed effects and weights
+params <- tidyr::crossing(
+  NN = c(2:5),
+  fe = list(spec1, spec2, spec3),
+  weights = list(NULL, ~weight)
+)
+
+# urban response over all combinations 
+rf.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
+  urban_rf(df, NN, fe = fe, weights = weights) %>%
+    mutate(spec = paste(fe, collapse = "+"),
+           weighted = !is.null(weights))
+}) %>%
+  mutate(bins = as.factor(bins))
+
+
+## 3. Income * urban group - issue with NA here ---------------------
 
 hist(df$gdppc_adm1_avg)
 quantile(df$gdppc_adm1_avg, na.rm=T, seq(0, 1, 0.1))

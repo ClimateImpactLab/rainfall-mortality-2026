@@ -31,9 +31,8 @@ fit_response <- function(data,
                          prcp_order,
                          interact_var = NULL,
                          log_mort = FALSE,
-                         fe = c("adm2_code^CHN_ts^agegroup",
-                                "adm0_code^year^agegroup"),
-                         weights = ~weight,
+                         fe = c("adm2_code^CHN_ts^agegroup", "adm0_code^year^agegroup"),
+                         weights = NULL,
                          cluster = ~adm1_code,
                          ...) {
 
@@ -71,11 +70,20 @@ fit_response <- function(data,
                           paste(rhs, collapse = " + "), # combine rhs, separated by +
                           paste(fe, collapse = " + "))) # combine fixed effects, separated by +
   
-  # run the regression
+  # print the regression equation
+  print(paste0("formula: ", deparse(f)))
+  
+  # conditionally add regression weights
+  args <- list(f, data = data, cluster = cluster, lean = TRUE, ...) 
+  if (!is.null(weights)) args$weights <- weights
+  
+  # run regression
   if (log_mort) {
-    fepois(f, data = data, weights = weights, cluster = cluster, lean = TRUE, ...)
+    print("running fepois regression")
+    do.call(fepois, args)
   } else {
-    feols(f, data = data, weights = weights, cluster = cluster, lean = TRUE, ...)
+    print("running feols regression")
+    do.call(feols, args)
   }
 }
 
