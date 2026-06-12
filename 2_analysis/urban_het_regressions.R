@@ -107,8 +107,9 @@ urban_rf <- function(df, n,
                       include.lowest = TRUE, ordered_result = TRUE)
     )
   
-  urban_groups <- levels(df$urban_bin)
+  df$agegroup <- as.factor(df$agegroup)
   agegroups <- levels(df$agegroup)
+  urban_groups <- levels(df$urban_bin)
   
   fit <- fit_response(df, 
                       tavg_order = tavg_order, prcp_order = prcp_order,
@@ -162,7 +163,7 @@ rf.urban %>%
 # fixed effects options from from Carleton et al 2022
 spec1 <- c("adm2_code^agegroup", "adm0_code^year")
 spec2 <- c("adm2_code^agegroup", "adm0_code^year^agegroup") # main specification
-spec3 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_agegrp_code^year")
+spec3 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_agegrp_code[year]")
 
 # create all combinations of urban share bins, fixed effects and weights
 params <- tidyr::crossing(
@@ -179,6 +180,32 @@ rf.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
 }) %>%
   mutate(bins = as.factor(bins))
 
+# write_csv(rf.urban.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.urban.fe.csv"))
+
+prf <- map(unique(rf.urban.fe$spec), function(sp) {
+  map(c(TRUE, FALSE), function(wt) {
+    plots <- map(sort(unique(rf.urban.fe$bins)), function(b) {
+      rf.urban.fe %>%
+        filter(spec == sp, weighted == wt, bins == b) %>%
+        plot_response(color = "agegroup", facet = "urban_bin",
+                      xlab = "Precipitation",
+                      ylab = "Δ deathrate",
+                      scales = "fixed") + 
+        ggh4x::force_panelsizes(cols = unit(8, "cm"), rows = unit(4, "cm"))
+    })
+    patchwork::wrap_plots(plots, ncol = 1) +
+      patchwork::plot_annotation(title = glue("fe: {sp} | weighted: {wt}"))
+  })
+})
+
+walk(prf, ~ walk(.x, print))
+
+# iwalk(prf, ~ iwalk(.x, function(p, wt_idx) {
+#   sp_idx <- .y
+#   wt_label <- if (wt_idx == 1) "weighted" else "unweighted"
+#   ggsave(glue("{DIR_FIGURE}/regs/urban_spec{sp_idx}_{wt_label}.png"),
+#          plot = p, width = 16, height = 12)
+# }))
 
 ## 3. Income * urban group - issue with NA here ---------------------
 
