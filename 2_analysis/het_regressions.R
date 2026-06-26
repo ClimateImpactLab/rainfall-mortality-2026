@@ -15,7 +15,10 @@ theme_set(theme_classic())
 USER = Sys.getenv("USER")
 setwd(this.path::this.dir())
 source("../0_utils/paths.R")
+
+# source functions
 source("../0_utils/functions.R")
+source("../0_utils/load_mortality_data.R")
 
 # LOAD DATA ---------------------------
 df <- read_csv(file.path(DATA_DIR, "mortality", "merge", "ghsl_mortality_merged.csv"))
@@ -31,12 +34,12 @@ agespec_response_spec2 <- fit_response(data = df,
 df$agegroup <- as.factor(df$agegroup)
 agegroups <- levels(df$agegroup)
 
-fit_a <- fit_response(df, tavg_order = 2, prcp_order = 2,
+fit_a <- fit_response(df, tavg_order = 2, prcp_order = 3,
                       fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"), 
                       weights = ~weight,
                       log_mort = TRUE)
 key_a <- make_coef_names("prcp_poly_")
-rf_a  <- build_response(fit_a, x = 0:300, poly_order = 2,
+rf_a  <- build_response(fit_a, x = 0:300, poly_order = 3,
                         groups = tibble(agegroup = agegroups),
                         key = key_a, id = "Precip")
 
@@ -136,39 +139,17 @@ urban_rf <- function(df, n,
   rf
 }
 
-### 2.1 change the number of urban share bins -----------------------
-
-rf.urban <- map_dfr(c(2:5), function(NN) urban_rf(df, NN)) %>% 
-  mutate(bins = as.factor(bins))
-
-rf.urban %>% 
-  filter(x %in% c(100, 200, 300)) %>% 
-  mutate(x = paste0(x, 'mm')) %>% 
-  ggplot() + 
-  geom_hline(yintercept=0, color = 'grey') + 
-  geom_point(aes(x = x, y = dy, color= urban_bin), 
-             position = position_dodge(width = .5))  + 
-  geom_errorbar(aes(x = x, ymin = lo, ymax= hi, color= urban_bin), 
-                position = position_dodge(width = .5)) + 
-  ylab("Proportion") + 
-  facet_wrap(~agegroup+bins, nrow=3)
-
-# rf.urban %>%
-#   plot_response(color = "agegroup", facet = c("urban_bin"),
-#                 xlab = "Precipitation",
-#                 ylab = "Δ deathrate",
-#                 scales = "fixed")
-
-### 2.1 try with different fixed effects and regression weights -----------
+### 2.1 change the number of urban share bins, fixed effects and regression weights -----------
 # fixed effects options from from Carleton et al 2022
 spec1 <- c("adm2_code^agegroup", "adm0_code^year")
 spec2 <- c("adm2_code^agegroup", "adm0_code^year^agegroup") # main specification
 spec3 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_agegrp_code[year]")
+spec4 <-  c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_code^year^agegroup")
 
 # create all combinations of urban share bins, fixed effects and weights
 params <- tidyr::crossing(
   NN = c(2:5),
-  fe = list(spec1, spec2, spec3),
+  fe = list(spec1, spec2, spec3, spec4),
   weights = list(NULL, ~weight)
 )
 
@@ -178,72 +159,10 @@ rf.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
     mutate(spec = paste(fe, collapse = "+"),
            weighted = !is.null(weights))
 }) %>%
-  mutate(bins = as.factor(bins))
+  mutate(bins = as.factor(bins),
+         bin_order = as.integer(urban_bin))
 
 # write_csv(rf.urban.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.urban.fe.csv"))
-
-prf <- map(unique(rf.urban.fe$spec), function(sp) {
-  map(c(TRUE, FALSE), function(wt) {
-    plots <- map(sort(unique(rf.urban.fe$bins)), function(b) {
-      rf.urban.fe %>%
-        filter(spec == sp, weighted == wt, bins == b) %>%
-        plot_response(color = "agegroup", facet = "urban_bin",
-                      xlab = "Precipitation",
-                      ylab = "Δ deathrate",
-                      scales = "fixed") + 
-        ggh4x::force_panelsizes(cols = unit(8, "cm"), rows = unit(4, "cm"))
-    })
-    patchwork::wrap_plots(plots, ncol = 1) +
-      patchwork::plot_annotation(title = glue("fe: {sp} | weighted: {wt}"))
-  })
-})
-
-# iwalk(prf, ~ iwalk(.x, function(p, wt_idx) {
-#   sp_idx <- .y
-#   wt_label <- if (wt_idx == 1) "weighted" else "unweighted"
-#   ggsave(glue("{DIR_FIGURE}/regs/urban_spec{sp_idx}_{wt_label}.png"),
-#          plot = p, width = 16, height = 12)
-# }))
-
-prf <- map(c(TRUE, FALSE), function(wt) {
-  plots <- map(sort(unique(rf.urban.fe$bins)), function(b) {
-    rf.urban.fe %>%
-      filter(weighted == wt, bins == b,
-               x %in% c(100, 200, 300)) %>%
-      mutate(x = paste0(x, 'mm')) %>% 
-      ggplot() + 
-      geom_hline(yintercept=0, color = 'grey') + 
-      geom_point(aes(x = x, y = dy, color= urban_bin,
-                     group = interaction(urban_bin, spec)), 
-                   position = position_dodge(width = .7))  + 
-      geom_errorbar(aes(x = x, ymin = lo, ymax= hi, 
-                        color= urban_bin, linetype = spec,
-                        group = interaction(urban_bin, spec)), 
-                      position = position_dodge(width = .7)) + 
-      ylab("Δ deathrate") + 
-      xlab("Precipitation") +
-      facet_wrap(~agegroup+bins, nrow=3) + 
-      ggh4x::force_panelsizes(cols = unit(11, "cm"), rows = unit(4, "cm")) +
-      guides(
-        linetype = guide_legend(title = "Specification", ncol = 1),
-        color    = guide_legend(title = "Urban bin", ncol = 1)
-      )
-  })
-  
-  patchwork::wrap_plots(plots, ncol = 4, guides = "collect") +
-    patchwork::plot_annotation(title = glue("weighted: {wt}")) &
-    theme(
-      legend.position = "bottom",
-      legend.box = "horizontal",   # legends side by side...
-      legend.direction = "vertical" # ...but each one stacks vertically
-    )
-})
-
-# iwalk(prf, function(p, wt_idx) {
-#   wt_label <- if (wt_idx == 1) "weighted" else "unweighted"
-#   ggsave(glue("{DIR_FIGURE}/regs/urban_combined_{wt_label}.png"),
-#          plot = p, width = 20, height = 9)
-# })
 
 ## 3. Income * urban group - issue with NA here ---------------------
 

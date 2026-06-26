@@ -173,7 +173,7 @@ build_response <- function(fit, x, poly_order, groups, key,
     ungroup() %>%
     # reattach original group columns
     left_join(mutate(groups, .gid = row_number()), by = ".gid") %>%
-    select(-.gid) %>%
+    dplyr::select(-.gid) %>%
     mutate(id = id)
   
   # report dropped cells
