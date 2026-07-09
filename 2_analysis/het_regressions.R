@@ -23,6 +23,13 @@ source("../0_utils/load_mortality_data.R")
 # LOAD DATA ---------------------------
 df <- read_csv(file.path(DATA_DIR, "mortality", "merge", "ghsl_mortality_merged.csv"))
 
+# Regression parameters --------------------------- 
+# fixed effects options from from Carleton et al 2022
+spec1 <- c("adm2_code^agegroup", "adm0_code^year")
+spec2 <- c("adm2_code^agegroup", "adm0_code^year^agegroup") # main specification
+spec3 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_agegrp_code[year]")
+spec4 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_code^year^agegroup") # saturated FEs
+
 # Regression ---------------------------
 ## 0. Replicate main specification from Carleton et al 2022 -----------------------
 agespec_response_spec2 <- fit_response(data = df,
@@ -30,33 +37,65 @@ agespec_response_spec2 <- fit_response(data = df,
                                        prcp_order = 2,
                                        interact_var = "adm0_code")
 
-## 1. Baseline reg for comparison--------------------
-df$agegroup <- as.factor(df$agegroup)
-agegroups <- levels(df$agegroup)
+## 1. Baseline reg for comparison --------------------
+#' default to poly 3 precip, poly 2 temp
+#' @param df         data containing an `urban_share` column (0-100).
+#' @param n          number of urban groups (e.g. 2, 3, 4, 5, 10).
+#' @param prcp_order precip polynomial order (also the response-curve order).
+#' @param tavg_order temperature polynomial order.
+#' @param x          precip values to evaluate the curve at.
+#' @param x_ref      reference precip or temperature value
+#' @param fe         fixed-effects spec passed to fit_response.
+#' @param log_mort   TRUE -> fepois, FALSE -> feols.
+#' @param prefix     prefix for the precip variable in the regression 
+#' @param id         label stored in the `id` column of the output.
+#' @return response-curve tibble; fitted model attached as attr(rf, "fit").
+base_rf <- function(df,
+                    prcp_order = 3, tavg_order = 2,
+                    x = 0:300,
+                    x_ref = 0,
+                    fe = spec2,
+                    weights = ~weight,
+                    log_mort = TRUE,
+                    prefix = "prcp_poly_",
+                    id = "Precip") {
+  
+  df$agegroup <- as.factor(df$agegroup)
+  agegroups <- levels(df$agegroup)
+  
+  fit_a <- fit_response(df, 
+                        tavg_order = tavg_order, prcp_order = prcp_order,
+                        fe = fe, 
+                        weights = weights,
+                        log_mort = log_mort)
+  
+  key_a <- make_coef_names(prefix = prefix, fit = fit_a)
+  
+  rf_a  <- build_response(fit_a, x = x, x_ref = x_ref, poly_order = 3,
+                          groups = tibble(agegroup = agegroups),
+                          key = key_a, id = id)
+}
 
-fit_a <- fit_response(df, tavg_order = 2, prcp_order = 3,
-                      fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"), 
-                      weights = ~weight,
-                      log_mort = TRUE)
-key_a <- make_coef_names("prcp_poly_")
-rf_a  <- build_response(fit_a, x = 0:300, poly_order = 3,
-                        groups = tibble(agegroup = agegroups),
-                        key = key_a, id = "Precip")
+# precip response
+rf.base <- base_rf()
 
-p_a <- plot_response(rf_a, color = "agegroup",
+p_a <- plot_response(rf.base, color = "agegroup",
                      xlab = "Precipitation",
                      ylab = "Δ deathrate (baseline)")
 p_a
 
-# 1.1 Check precip order importance in baseline reg
+### 1.1 Check precip order importance in baseline reg --------------------
 prcp_orders <- c(2:4)
 
 rf.poly <- map_dfr(prcp_orders, function(prcp_order){
   
   print(paste0("==== running precip poly ", prcp_order, " ======="))
   
+  df$agegroup <- as.factor(df$agegroup)
+  agegroups <- levels(df$agegroup)
+  
   fit <- fit_response(df, tavg_order = 2, prcp_order = prcp_order,
-                      fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"),
+                      fe = spec2,
                       weights = ~weight,
                       log_mort = TRUE)
   
@@ -75,27 +114,58 @@ rf.poly %>%
                 ylab = "Δ deathrate",
                 scales = "fixed")
 
-## 2. Urban split ----------------------------------------------------
-# default to poly 3 precip, poly 2 temp
+### 1.2 Check under different fixed effects --------------------
+# create all combinations of urban share bins, fixed effects and weights
+params <- tidyr::crossing(
+  fe = list(spec1, spec2, spec3, spec4),
+  weights = list(NULL, ~weight)
+)
 
+rf.base.fe <- pmap_dfr(params, function(fe, weights) {
+  base_rf(df, fe = fe, weights = weights) %>%
+    mutate(spec = paste(fe, collapse = "+"),
+           weighted = !is.null(weights))
+})
+
+# write_csv(rf.base.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.base.fe.csv"))
+
+# temperature response under saturated FEs
+rf.base.sat.temp <- base_rf(x = -20:45,
+                            x_ref = 27,
+                            fe = spec4,
+                            prefix = "tavg_poly_",
+                            id = "Temperature")
+
+rf.base.sat.temp %>% 
+  plot_response(color = "agegroup", facet = "precip_poly",
+              xlab = "Precipitation",
+              ylab = "Δ deathrate",
+              scales = "fixed")  
+
+## 2. Urban split ----------------------------------------------------
 # hist(df$urban_share)
 # quantile(df$urban_share, na.rm=T, seq(0, 1, 0.1))
 
+#' default to poly 3 precip, poly 2 temp
 #' @param df         data containing an `urban_share` column (0-100).
 #' @param n          number of urban groups (e.g. 2, 3, 4, 5, 10).
 #' @param prcp_order precip polynomial order (also the response-curve order).
 #' @param tavg_order temperature polynomial order.
 #' @param x          precip values to evaluate the curve at.
+#' @param x_ref      reference precip or temperature value
 #' @param fe         fixed-effects spec passed to fit_response.
 #' @param log_mort   TRUE -> fepois, FALSE -> feols.
+#' @param prefix     prefix for the precip variable in the regression 
 #' @param id         label stored in the `id` column of the output.
 #' @return response-curve tibble; fitted model attached as attr(rf, "fit").
 urban_rf <- function(df, n,
                      prcp_order = 3, tavg_order = 2,
                      x = 0:300,
-                     fe = c("adm2_code^agegroup", "adm0_code^year^agegroup"),
+                     x_ref = 0,
+                     fe = spec2,
                      weights = ~weight,
                      log_mort = TRUE,
+                     prefix = "prcp_poly_",
                      id = "Precip") {
   
   if (!"urban_share" %in% names(df)) {
@@ -121,11 +191,12 @@ urban_rf <- function(df, n,
                       weights = weights,
                       log_mort = log_mort)
   
-  key <- make_coef_names("prcp_poly_", interact_var = "urban_bin", fit = fit)
+  key <- make_coef_names(prefix = prefix, interact_var = "urban_bin", fit = fit)
   
   rf <- build_response(
     fit,
     x = x,
+    x_ref = x_ref,
     poly_order = prcp_order,
     groups = tidyr::crossing(agegroup = agegroups, urban_bin = urban_groups),
     key = key,
@@ -140,11 +211,6 @@ urban_rf <- function(df, n,
 }
 
 ### 2.1 change the number of urban share bins, fixed effects and regression weights -----------
-# fixed effects options from from Carleton et al 2022
-spec1 <- c("adm2_code^agegroup", "adm0_code^year")
-spec2 <- c("adm2_code^agegroup", "adm0_code^year^agegroup") # main specification
-spec3 <- c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_agegrp_code[year]")
-spec4 <-  c("adm2_code^agegroup", "adm0_code^year^agegroup", "adm1_code^year^agegroup")
 
 # create all combinations of urban share bins, fixed effects and weights
 params <- tidyr::crossing(
