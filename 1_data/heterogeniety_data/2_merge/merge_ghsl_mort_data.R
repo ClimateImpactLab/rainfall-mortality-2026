@@ -16,7 +16,7 @@ source("../../../0_utils/load_mortality_data.R")
 
 # LOAD DATA ---------------------------
 mortality_data <- load_mortality_data(CARLETON_2022_DATA_DIR, load_cleaned = TRUE,
-                          cache_path = file.path(DATA_DIR, "mortality", 
+                          cache_path = file.path(DATA_DIR, "mortality_data", 
                                                  "cleaned", "mortality_clean.parquet"))
 
 # prep mortality for merge with GHSL data
@@ -50,4 +50,4 @@ df %>%
   select(adm0, adm1, adm1_id, adm2, adm2_id, year, year_5s, agegroup, urban_share)
 
 # write merged data
-write_csv(df, file.path(DATA_DIR, "mortality", "merge", "ghsl_mortality_merged.csv"))
+write_csv(df, file.path(DATA_DIR, "mortality_data", "merge", "ghsl_mortality_merged.csv"))

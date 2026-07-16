@@ -21,7 +21,7 @@ source("../0_utils/functions.R")
 source("../0_utils/load_mortality_data.R")
 
 # LOAD DATA ---------------------------
-df <- read_csv(file.path(DATA_DIR, "mortality", "merge", "ghsl_mortality_merged.csv"))
+df <- read_csv(file.path(DATA_DIR, "mortality_data", "merge", "ghsl_mortality_merged.csv"))
 
 # Regression parameters --------------------------- 
 # fixed effects options from from Carleton et al 2022
@@ -40,7 +40,6 @@ agespec_response_spec2 <- fit_response(data = df,
 ## 1. Baseline reg for comparison --------------------
 #' default to poly 3 precip, poly 2 temp
 #' @param df         data containing an `urban_share` column (0-100).
-#' @param n          number of urban groups (e.g. 2, 3, 4, 5, 10).
 #' @param prcp_order precip polynomial order (also the response-curve order).
 #' @param tavg_order temperature polynomial order.
 #' @param x          precip values to evaluate the curve at.
@@ -49,9 +48,13 @@ agespec_response_spec2 <- fit_response(data = df,
 #' @param log_mort   TRUE -> fepois, FALSE -> feols.
 #' @param prefix     prefix for the precip variable in the regression 
 #' @param id         label stored in the `id` column of the output.
+#' @param suffix     suffix of the climate variable based on the climate produce 
+#'                   e.g. GMFD = "", ERA5-Land = "_ERA5LAND" etc.
 #' @return response-curve tibble; fitted model attached as attr(rf, "fit").
-base_rf <- function(df,
-                    prcp_order = 3, tavg_order = 2,
+base_rf <- function(df, 
+                    suffix,
+                    prcp_order = 3, 
+                    tavg_order = 2,
                     x = 0:300,
                     x_ref = 0,
                     fe = spec2,
@@ -66,23 +69,39 @@ base_rf <- function(df,
   fit_a <- fit_response(df, 
                         tavg_order = tavg_order, prcp_order = prcp_order,
                         fe = fe, 
-                        weights = weights,
-                        log_mort = log_mort)
+                        weights = ~weight,
+                        log_mort = log_mort, 
+                        suffix = suffix)
   
-  key_a <- make_coef_names(prefix = prefix, fit = fit_a)
+  key_a <- make_coef_names(prefix = prefix, fit = fit_a, suffix = suffix)
   
-  rf_a  <- build_response(fit_a, x = x, x_ref = x_ref, poly_order = 3,
+  # polynomial order based on climate variable
+  poly_order <- if (prefix == "tavg_poly_") tavg_order else prcp_order
+  
+  rf_a  <- build_response(fit_a, x = x, x_ref = x_ref, poly_order = poly_order,
                           groups = tibble(agegroup = agegroups),
                           key = key_a, id = id)
+  rf_a
 }
 
-# precip response
-rf.base <- base_rf()
+# compare baseline precipitation and temperature response between GMFD and ERA5-Land
+suffixes <- c("", "_ERA5LAND")
 
-p_a <- plot_response(rf.base, color = "agegroup",
-                     xlab = "Precipitation",
-                     ylab = "Δ deathrate (baseline)")
-p_a
+# using two calls of base_rf in favor of readability
+results <- map_dfr(suffixes, function(suffix) {
+  bind_rows(
+    base_rf(df = df, suffix = suffix),
+    base_rf(df = df,
+            x = round(seq(-20, 45, by = 0.1), 1),
+            x_ref = 27,
+            prefix = "tavg_poly_",
+            id = "Temperature",
+            suffix = suffix)
+  ) %>%
+    mutate(suffix = if_else(suffix == "", "GMFD", suffix))
+})
+
+# write_csv(results, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.main.spec.csv"))
 
 ### 1.1 Check precip order importance in baseline reg --------------------
 prcp_orders <- c(2:4)
@@ -99,7 +118,7 @@ rf.poly <- map_dfr(prcp_orders, function(prcp_order){
                       weights = ~weight,
                       log_mort = TRUE)
   
-  key <- make_coef_names("prcp_poly_")
+  key <- make_coef_names(prefix = "prcp_poly_", suffix = "_ERA5LAND")
   
   build_response(fit, x = 0:300, poly_order = prcp_order,
                  groups = tibble(agegroup = agegroups),
@@ -115,32 +134,36 @@ rf.poly %>%
                 scales = "fixed")
 
 ### 1.2 Check under different fixed effects --------------------
-# create all combinations of urban share bins, fixed effects and weights
+# create all combinations of fixed effects, weights, and data suffixes
 params <- tidyr::crossing(
-  fe = list(spec1, spec2, spec3, spec4),
-  weights = list(NULL, ~weight)
+  fe      = list(spec1, spec2, spec3, spec4),
+  weights = list(~weight), # more weights can be added e.g. list(NULL, ~weight)
+  suffix  = c("_ERA5LAND") # more suffixes can be added e.g. c("", "_ERA5LAND")
 )
 
-rf.base.fe <- pmap_dfr(params, function(fe, weights) {
-  base_rf(df, fe = fe, weights = weights) %>%
+rf.precip.base.fe <- pmap_dfr(params, function(fe, weights, suffix) {
+  base_rf(df, fe = fe, weights = weights, suffix = suffix) %>%
     mutate(spec = paste(fe, collapse = "+"),
-           weighted = !is.null(weights))
+           weighted = !is.null(weights),
+           suffix = if_else(suffix == "", "GMFD", suffix))
 })
 
-# write_csv(rf.base.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.base.fe.csv"))
+# write_csv(rf.precip.base.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.precip.base.fe.csv"))
 
 # temperature response under saturated FEs
-rf.base.sat.temp <- base_rf(x = -20:45,
+rf.base.sat.temp <- base_rf(df = df,
+                            x = -20:45,
                             x_ref = 27,
                             fe = spec4,
                             prefix = "tavg_poly_",
-                            id = "Temperature")
+                            id = "Temperature",
+                            suffix = "_ERA5LAND")
 
 rf.base.sat.temp %>% 
-  plot_response(color = "agegroup", facet = "precip_poly",
-              xlab = "Precipitation",
-              ylab = "Δ deathrate",
-              scales = "fixed")  
+  plot_response(color = "agegroup",
+                xlab = "Temperature",
+                ylab = "Δ deathrate",
+                scales = "fixed")  
 
 ## 2. Urban split ----------------------------------------------------
 # hist(df$urban_share)
@@ -157,6 +180,8 @@ rf.base.sat.temp %>%
 #' @param log_mort   TRUE -> fepois, FALSE -> feols.
 #' @param prefix     prefix for the precip variable in the regression 
 #' @param id         label stored in the `id` column of the output.
+#' @param suffix     suffix of the climate variable based on the climate produce 
+#'                   e.g. GMFD = "", ERA5-Land = "_ERA5LAND" etc.
 #' @return response-curve tibble; fitted model attached as attr(rf, "fit").
 urban_rf <- function(df, n,
                      prcp_order = 3, tavg_order = 2,
@@ -166,7 +191,8 @@ urban_rf <- function(df, n,
                      weights = ~weight,
                      log_mort = TRUE,
                      prefix = "prcp_poly_",
-                     id = "Precip") {
+                     id = "Precip",
+                     suffix = "_ERA5LAND") {
   
   if (!"urban_share" %in% names(df)) {
     stop("`df` must contain `urban_share`")
@@ -189,9 +215,13 @@ urban_rf <- function(df, n,
                       interact_var = "urban_bin", 
                       fe = fe, 
                       weights = weights,
-                      log_mort = log_mort)
+                      log_mort = log_mort,
+                      suffix = suffix)
   
-  key <- make_coef_names(prefix = prefix, interact_var = "urban_bin", fit = fit)
+  key <- make_coef_names(prefix = prefix, 
+                         interact_var = "urban_bin", 
+                         fit = fit,
+                         suffix = suffix)
   
   rf <- build_response(
     fit,
@@ -204,7 +234,8 @@ urban_rf <- function(df, n,
   ) %>%
     mutate(
       bins = paste0("N.bins = ", n),
-      urban_bin = factor(urban_bin, levels = urban_groups)
+      urban_bin = factor(urban_bin, levels = urban_groups),
+      suffix = suffix
     )
   
   rf
@@ -220,7 +251,7 @@ params <- tidyr::crossing(
 )
 
 # urban response over all combinations 
-rf.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
+rf.precip.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
   urban_rf(df, NN, fe = fe, weights = weights) %>%
     mutate(spec = paste(fe, collapse = "+"),
            weighted = !is.null(weights))
@@ -228,7 +259,7 @@ rf.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
   mutate(bins = as.factor(bins),
          bin_order = as.integer(urban_bin))
 
-# write_csv(rf.urban.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.urban.fe.csv"))
+# write_csv(rf.precip.urban.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.precip.urban.fe.csv"))
 
 ## 3. Income * urban group - issue with NA here ---------------------
 

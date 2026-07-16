@@ -22,6 +22,8 @@ get_weights <- function(df){
 #'               "col" -> col × prcp_poly_k × agegroup interactions, where
 #'                       "col" is any categorical column in `data`
 #'                       (e.g. "adm0_code", "adm1_id", "climate_zone").
+#' suffix: suffix of the climate variable based on the climate produce 
+#'         e.g. GMFD = "", ERA5-Land = "ERA5LAND" etc.
 #' Note: `fe` defaults assume a country-style design. When changing
 #' `interact_var`, you'll usually want to pass an `fe` that matches the new
 #' grouping (e.g. drop `adm0_code^year^agegroup` for adm1-level interactions).
@@ -34,6 +36,7 @@ fit_response <- function(data,
                          fe = c("adm2_code^CHN_ts^agegroup", "adm0_code^year^agegroup"),
                          weights = NULL,
                          cluster = ~adm1_code,
+                         suffix = "",
                          ...) {
 
   # ensure the interaction variable is a factor so feols treats it as categorical
@@ -51,16 +54,16 @@ fit_response <- function(data,
 
   # create the temperature polynomial only when tavg order is more than zero
   if (tavg_order > 0) {
-    rhs <- c(rhs, paste0("i(agegroup, tavg_poly_", seq_len(tavg_order), ")"))
+    rhs <- c(rhs, paste0("i(agegroup, tavg_poly_", seq_len(tavg_order), suffix, ")"))
   }
 
   # create the precipitation polynomial only when precip order is more than zero
   if (prcp_order > 0) {
     # create different precip terms based on whether interact_var is set
     rhs <- c(rhs, if (!is.null(interact_var)) {
-      paste0(interact_var, ":prcp_poly_", seq_len(prcp_order), ":agegroup")
+      paste0(interact_var, ":prcp_poly_", seq_len(prcp_order), suffix, ":agegroup")
     } else {
-      paste0("i(agegroup, prcp_poly_", seq_len(prcp_order), ")")
+      paste0("i(agegroup, prcp_poly_", seq_len(prcp_order), suffix, ")")
     })
   }
   
@@ -95,7 +98,9 @@ fit_response <- function(data,
 #'                       and "<prefix><k>". The `groups` tibble passed to
 #'                       `build_response` must contain a column named `col`.
 #' prefix: prcp_poly_ or tavg_poly_
-make_coef_names <- function(prefix, interact_var = NULL, fit = NULL) {
+#' suffix: suffix of the climate variable based on the climate produce 
+#'         e.g. GMFD = "", ERA5-Land = "ERA5LAND" etc. 
+make_coef_names <- function(prefix, interact_var = NULL, fit = NULL, suffix = "") {
 
   if (!is.null(interact_var)) {
     if (is.null(fit)) {
@@ -109,14 +114,14 @@ make_coef_names <- function(prefix, interact_var = NULL, fit = NULL) {
       # build the set of expected tokens in the coefficient name
       want <- c(paste0(interact_var, g[[interact_var]]),
                 paste0("agegroup",  g$agegroup),
-                paste0(prefix, k))
+                paste0(prefix, k, suffix))
       # check whether there's a matching token and find the indices where the match is true
       hits <- which(vapply(cn_tok, setequal, logical(1), want))
       # ensure that the coefficient name is returned only in the case of one match
       if (length(hits) == 1) cn[hits] else NA_character_
     }
   } else {
-    function(g, k) sprintf("agegroup::%s:%s%d", g$agegroup, prefix, k)
+    function(g, k) sprintf("agegroup::%s:%s%d%s", g$agegroup, prefix, k, suffix)
   }
 }
 
@@ -194,7 +199,7 @@ build_response <- function(fit, x, poly_order, groups, key,
 #' 
 plot_response <- function(rf_data, color = "agegroup", facet = NULL,
                           xlab = NULL, ylab = "Δ outcome (vs x = ref)",
-                          scales='fixed') {
+                          p_title = NULL, scales='fixed') {
   
   color_palette <- met.brewer("Hokusai3", n = 3)
   
@@ -204,7 +209,7 @@ plot_response <- function(rf_data, color = "agegroup", facet = NULL,
     geom_line(linewidth = 1) +
     scale_color_manual(values = color_palette) +
     scale_fill_manual(values = color_palette) +
-    labs(x = xlab, y = ylab) +
+    labs(x = xlab, y = ylab, title = p_title) +
     theme_classic() +
     theme(legend.key.spacing.y = unit(0.3, "cm") ,
           legend.key.width = unit(1.5, "cm"),
