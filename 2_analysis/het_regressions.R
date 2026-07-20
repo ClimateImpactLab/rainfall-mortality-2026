@@ -128,7 +128,8 @@ rf.poly <- map_dfr(prcp_orders, function(prcp_order){
   mutate(precip_poly = as.factor(precip_poly))
 
 rf.poly %>% 
-  plot_response(color = "agegroup", facet = "precip_poly",
+  plot_response(color = "agegroup", 
+                facet = "precip_poly",
                 xlab = "Precipitation",
                 ylab = "Δ deathrate",
                 scales = "fixed")
@@ -223,11 +224,14 @@ urban_rf <- function(df, n,
                          fit = fit,
                          suffix = suffix)
   
+  # polynomial order based on climate variable
+  poly_order <- if (prefix == "tavg_poly_") tavg_order else prcp_order
+  
   rf <- build_response(
     fit,
     x = x,
     x_ref = x_ref,
-    poly_order = prcp_order,
+    poly_order = poly_order,
     groups = tidyr::crossing(agegroup = agegroups, urban_bin = urban_groups),
     key = key,
     id = id
@@ -260,6 +264,53 @@ rf.precip.urban.fe <- pmap_dfr(params, function(NN, fe, weights) {
          bin_order = as.integer(urban_bin))
 
 # write_csv(rf.precip.urban.fe, glue(DIR_REPO_RAINFALL_MORTALITY, "/output/data/rf/rf.precip.urban.fe.csv"))
+
+#### 2.1.1 same as above for temperature. read note below before uncommenting -----------
+#' Note: run with a modified version of fit_response in functions. replaces lines
+#' 56 to 58 with lines 61 to 68 and replace all <prcp_> terms with tavg_. this 
+#' produces the temperature response function with urban heterogeniety
+
+# # temperature response under saturated FEs with urban heterogeniety
+# params <- tidyr::crossing(
+#   NN = c(2:5),
+#   fe = list(spec2, spec4),
+#   weights = list(~weight)
+# )
+#
+# # urban response over all combinations. 
+# rf.temp.urban.sat <- pmap_dfr(params, function(NN, fe, weights) {
+#   urban_rf(df = df,
+#            n = NN,
+#            fe = fe,
+#            weights = weights,
+#            x = -20:45,
+#            x_ref = 27,
+#            prefix = "tavg_poly_",
+#            id = "Temperature") %>%
+#     mutate(spec = paste(fe, collapse = "+"),
+#            weighted = !is.null(weights))
+# }) %>%
+#   mutate(bins = as.factor(bins),
+#          bin_order = as.integer(urban_bin))
+# 
+# # create plots
+# prf <- map(unique(rf.temp.urban.sat$spec), function(sp) {
+#   plots <- map(sort(unique(rf.temp.urban.sat$bins)), function(b) {
+#     rf.temp.urban.sat %>%
+#         filter(spec == sp, bins == b) %>%
+#         plot_response(color = "agegroup", facet = "urban_bin",
+#                       xlab = "Temperature",
+#                       ylab = "Δ deathrate",
+#                       scales = "fixed") + 
+#         ggh4x::force_panelsizes(cols = unit(8, "cm"), rows = unit(4, "cm"))
+#     })
+#     patchwork::wrap_plots(plots, ncol = 1) +
+#       patchwork::plot_annotation(title = glue("fe: {sp}"))
+# })
+# 
+# # save plots. change spec and plot numbers below 
+# ggsave(glue("{DIR_FIGURE}/regs/era5-land/urban_spec4_temp.png"), 
+#        plot = prf[[2]], width = 18, height = 12)
 
 ## 3. Income * urban group - issue with NA here ---------------------
 
