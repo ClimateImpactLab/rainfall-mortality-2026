@@ -39,7 +39,7 @@ load_mortality_data <- function(data_dir,
   message("Reading raw .dta file (this may take a few minutes)...")
   df <- haven::read_dta(
     glue::glue(data_dir,
-               "0_data_cleaning/3_final/global_mortality_panel.dta")
+               "0_data_cleaning/3_final/global_mortality_panel_era5.dta")
   )
   
   # drop unused column families
