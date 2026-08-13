@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict, deque
 import xarray as xr
 import rioxarray
@@ -12,18 +13,18 @@ ds = xr.open_dataset("era5-land-example.nc4", chunks={'time': 1})  # or larger c
 rain = ds['ro']  # shape (time, y, x) or (y, x) if single snapshot
 
 # Load TauDEM D8 directions
-d8 = rioxarray.open_rasterio("compositep.tif") # shape (1, y, x)
-d8 = d8.squeeze("band", drop=True) # -> shape (y, x)
+d8 = rioxarray.open_rasterio("compositep.tif")    # shape (1, y, x)
+d8 = d8.squeeze("band", drop=True)  # -> shape (y, x)
 
 assert rain.shape[-2:] == d8.shape[-2:]
 
-## Prepare TauDEM flow logic
+# Prepare TauDEM flow logic
 
 d8_to_offset = {
-    1: (0, 1),
-    2: (-1, 1),
-    3: (-1, 0),
-    4: (-1, -1),
+    1:  (0, 1),
+    2:  (-1, 1),
+    3:  (-1, 0),
+    4:  (-1, -1),
     5: (0, -1),
     6: (1, -1),
     7: (1, 0),
@@ -116,7 +117,7 @@ def accumulate_rain_single(rain_2d, downstream, topo_order):
             
     return acc.reshape(ny, nx)
 
-rain_snapshot = rain.isel(valid_time=0) # or drop time if no time dim
+rain_snapshot = rain.isel(valid_time=0)  # or drop time if no time dim
 cum = accumulate_rain_single(rain_snapshot.values, downstream, topo_order)
 
 cum_da = xr.DataArray(
@@ -147,10 +148,10 @@ def accumulate_rain_timefirst(rain_3d, downstream, topo_order):
         out[k] = accumulate_rain_single(rain_3d[k], downstream, topo_order)
     return out
 
-## Process each region
+# Process each region
 
 for region in regions:
-    sub = xr.open_dataset("/project/cil/gcp/climate/ERA5-LAND/processed/monthly/usa_monthly.nc4")
+    sub = xr.open_dataset(f"/project/cil/gcp/climate/ERA5-LAND/processed/monthly/{region}_monthly.nc4")
     rain_sub = sub["rainfall"]  # (time, y, x)
 
     # Match sub coords to full coords
@@ -201,11 +202,13 @@ for region in regions:
 
     newvars = []
     for var in ["rainfall", "era5melt", "tempmelt"]:
+        rain_sub = sub[var]  # (time, y, x)
+
         cum_rain_sub = xr.apply_ufunc(
             accumulate_rain_timefirst,
             rain_sub,
             input_core_dims=[['valid_time', 'latitude', 'longitude']],
-            output_core_dims=[['time', 'latitude', 'longitude']],
+            output_core_dims=[['valid_time', 'latitude', 'longitude']],
             vectorize=False,
             kwargs={
                 'downstream': downstream_local,
@@ -215,6 +218,7 @@ for region in regions:
             output_dtypes=[np.float64],
         )
 
+        cum_rain_sub.name = f"{var}_flow"
         newvars.append(cum_rain_sub)
 
     ds_out = xr.merge(newvars)
