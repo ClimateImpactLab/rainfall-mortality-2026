@@ -1,6 +1,6 @@
 # Young-Hsiang Panel With ERA5-Land Wind
 
-This note documents the Young-Hsiang state-month mortality panel with ERA5-Land wind added for 1950-2015.
+This note documents the Young-Hsiang state-month mortality panel with ERA5-Land wind and precipitation added for 1950-2015.
 
 ## Main Files
 
@@ -14,7 +14,9 @@ Files:
 - `young_hsiang_state_month_era5land_wind_1950_2015.dta`
 - `checks/era5land_vs_young_hsiang_wind_checks.xlsx`
 
-The panel keeps the original Young-Hsiang years, 1930-2015. ERA5-Land wind starts in 1950, so rows before 1950 have missing ERA5-Land wind.
+The wind files now also include ERA5-Land precipitation.
+
+The panel keeps the original Young-Hsiang years, 1930-2015. ERA5-Land wind and precipitation start in 1950, so rows before 1950 have missing ERA5-Land wind and precipitation.
 
 ## External Sources
 
@@ -39,9 +41,13 @@ ERA5-Land raw windspeed (raster) used here:
 
 - `/project/cil/gcp/climate/ERA5-LAND/raw/daily/usa/wind_max/`
 
-## How Wind Was Added
+ERA5-Land raw precipitation (raster) used here:
 
-Wind was merged by:
+- `/project/cil/gcp/climate/ERA5-LAND/raw/daily/usa/tp_total/`
+
+## How Wind and Precipitation Were Added
+
+Wind and precipitation were merged by:
 
 - `stfips`
 - `year`
@@ -51,9 +57,10 @@ Wind was merged by:
 The state polygons are the Census state shapes included in the Young-Hsiang data.
 The output keeps the 36 states in their panel.
 
-The ERA5-Land state-month file is:
+The ERA5-Land state-month files are:
 
 - `/project/cil/gcp/estimation/rainfall-mortality/climate_data/ERA5-LAND/USA/state_month/era5land_usa_state_month_wind_1950_2015.csv`
+- `/project/cil/gcp/estimation/rainfall-mortality/climate_data/ERA5-LAND/USA/state_month/era5land_usa_state_month_precip_1950_2015.csv`
 
 State-grid weights are here:
 
@@ -71,6 +78,18 @@ Aggregation:
 
 `daily grid-cell wind -> grid-cell monthly max -> state weighted mean`
 
+## Added Precipitation Variables
+
+- `prcp_pop_p1` through `prcp_pop_p5`: population-weighted monthly sums of daily grid-cell precipitation powers
+- `prcp_area_p1` through `prcp_area_p5`: area-weighted monthly sums of daily grid-cell precipitation powers
+
+Units for `prcp_*_p1` are millimeters. Higher powers are the same daily
+precipitation values raised to powers 2 through 5 before aggregation.
+
+Aggregation:
+
+`daily grid-cell precipitation powers -> daily state weighted mean -> monthly sum`
+
 ## Coverage
 
 For 1950-2015:
@@ -79,6 +98,8 @@ For 1950-2015:
 - rows: 28,512
 - rows with ERA5-Land wind: 28,512
 - missing ERA5-Land wind rows: 0
+- rows with ERA5-Land precipitation: 28,512
+- missing ERA5-Land precipitation rows: 0
 
 ## Check Workbook
 
@@ -105,7 +126,5 @@ Main takeaway:
 - In Young-Hsiang TC months, ERA5-Land area-weighted wind is in the same broad range as `maxs` through the middle of the distribution.
 - The variables diverge in the upper tail. ERA5-Land does not reproduce the very high `maxs` values in the strongest TC months.
 - This is consistent with ERA5-Land wind being useful as a broad wind check, but maybe not a perfect replacement measure for TC exposure. 
-
-
 
 
