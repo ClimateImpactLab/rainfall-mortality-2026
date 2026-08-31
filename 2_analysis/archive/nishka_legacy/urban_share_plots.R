@@ -11,8 +11,8 @@ theme_set(theme_classic())
 # set paths
 USER = Sys.getenv("USER")
 setwd(this.path::this.dir())
-source("../0_utils/paths.R")
-source("../0_utils/functions.R")
+source("../../0_utils/paths.R")
+source("../../0_utils/functions.R")
 
 # LOAD DATA ---------------------------
 # Load admin urbanisation data

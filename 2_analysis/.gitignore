@@ -1,0 +1,23 @@
+# Local agent metadata
+.agents/
+.codex/
+
+# Generated Python files
+__pycache__/
+*.py[cod]
+
+# R session junk
+.RData
+.Rhistory
+
+# Job logs and scratch files
+*.out
+*.err
+*.log
+*.tmp
+*~
+
+# Superseded experiments kept locally for reference
+z_old/
+*/z_old/
+archive/*_z_old/

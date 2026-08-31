@@ -14,11 +14,11 @@ theme_set(theme_classic())
 # set paths
 USER = Sys.getenv("USER")
 setwd(this.path::this.dir())
-source("../0_utils/paths.R")
+source("../../0_utils/paths.R")
 
 # source functions
-source("../0_utils/functions.R")
-source("../0_utils/load_mortality_data.R")
+source("../../0_utils/functions.R")
+source("../../0_utils/archive/load_mortality_data.R")
 
 # LOAD DATA ---------------------------
 df <- read_csv(file.path(DATA_DIR, "mortality_data", "merge", "ghsl_mortality_merged.csv"))
@@ -406,5 +406,4 @@ for(bb in unique(rf.urban.inc$bins)){
     labs(x = "Urban-share bin", y = "Δ deathrate")
   ggsave(file.path(DIR_FIGURE, paste0("urban_inc_errorbars", bb, ".png")))
 }
-
 
