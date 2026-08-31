@@ -1,0 +1,1227 @@
+---
+title: "Philippines Mortality Descriptive Statistics"
+output:
+  html_document:
+    self_contained: false
+    toc: true
+    toc_float: true
+    toc_depth: 2
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, message = FALSE, warning = FALSE,
+  fig.width = 10, fig.height = 6, dpi = 150
+)
+
+# Set the PROJ path on RCC if needed
+proj_data <- file.path(dirname(dirname(R.home())), "share", "proj")
+if (dir.exists(proj_data)) {
+  Sys.setenv(PROJ_DATA = proj_data)
+  Sys.setenv(PROJ_LIB = proj_data)
+}
+
+# Packages
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(kableExtra)
+library(leaflet)
+library(plotly)
+library(scales)
+library(sf)
+library(stringr)
+library(tidyr)
+
+sf_use_s2(FALSE)
+
+# Plot theme used throughout the descriptive output
+theme_set(
+  theme_minimal(base_size = 13) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title.position = "plot",
+      legend.position = "bottom",
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.background = element_rect(fill = "white", color = NA)
+    )
+)
+
+# Project paths
+user_name <- Sys.getenv("USER", unset = Sys.info()[["user"]])
+repo_dir <- Sys.getenv("RAINFALL_MORTALITY_REPO")
+if (repo_dir == "") repo_dir <- file.path("/project/cil/home_dirs", user_name, "repos/rainfall-mortality-2026")
+
+source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/Death_Rates/PHL/paths.R"))
+
+shape_dir <- file.path(post2023_shapefiles_dir, "PH_Adm3_MuniCities.shp")
+
+# Mortality-rate files used below
+rate_files <- c(
+  adm3_total = file.path(death_rates_dir, "adm3_year_total.csv"),
+  adm3_age_broad = file.path(death_rates_dir, "adm3_year_age_broad.csv"),
+  national_total = file.path(death_rates_dir, "national_year_total.csv"),
+  national_sex = file.path(death_rates_dir, "national_year_sex.csv"),
+  national_age_broad = file.path(death_rates_dir, "national_year_age_broad.csv"),
+  national_age_broad_sex = file.path(death_rates_dir, "national_year_age_broad_sex.csv"),
+  national_age_standard = file.path(death_rates_dir, "national_year_age_standard.csv"),
+  national_month_age_broad = file.path(death_rates_dir, "national_month_age_broad.csv")
+)
+
+cause_summary_file <- file.path(descriptive_tables_dir, "phl_cause_summary.csv")
+
+# Population files used for the interpolation checks
+population_files <- c(
+  annual = file.path(population_interpolated_dir, "PHL_population_annual_adm3.csv"),
+  census = file.path(population_clean_dir, "census_pop_final.csv"),
+  psgc = file.path(admin_geocodes_clean_dir, "psgc_adm_codes.csv")
+)
+
+# Keep geography codes as strings so leading zeros are preserved
+id_classes <- c(
+  shp_adm1_code = "character", shp_adm2_code = "character",
+  shp_adm3_code = "character", psgc_adm3_code = "character"
+)
+
+# ADM3 mortality-rate files
+adm3_total <- fread(rate_files["adm3_total"], colClasses = id_classes) %>%
+  as_tibble()
+
+adm3_age_broad <- fread(rate_files["adm3_age_broad"], colClasses = id_classes) %>%
+  as_tibble() %>%
+  mutate(age_group_broad = factor(age_group_broad, levels = c("0-4", "5-64", "65+")))
+
+# National mortality-rate files
+national_sex <- fread(rate_files["national_sex"], showProgress = FALSE) %>% as_tibble()
+national_age_broad <- fread(rate_files["national_age_broad"], showProgress = FALSE) %>% as_tibble()
+national_age_broad_sex <- fread(rate_files["national_age_broad_sex"], showProgress = FALSE) %>% as_tibble()
+national_age_standard <- fread(rate_files["national_age_standard"], showProgress = FALSE) %>% as_tibble()
+national_month_age_broad <- fread(rate_files["national_month_age_broad"], showProgress = FALSE) %>% as_tibble()
+national_total <- fread(rate_files["national_total"], showProgress = FALSE) %>% as_tibble()
+
+# Cause-of-death summary
+cause_summary <- fread(cause_summary_file) %>% as_tibble()
+
+# Population files
+annual_pop <- fread(
+  population_files["annual"], colClasses = id_classes,
+  showProgress = FALSE
+) %>% as_tibble()
+
+census_pop <- fread(
+  population_files["census"], colClasses = id_classes,
+  showProgress = FALSE
+) %>% as_tibble()
+
+psgc_pop_controls <- fread(
+  population_files["psgc"], colClasses = "character",
+  showProgress = FALSE
+) %>% as_tibble()
+```
+
+<style>
+.main-container {
+  max-width: 1280px !important;
+}
+</style>
+
+
+# Overview
+
+All rates use place of residence and resident population. Rates are deaths per 100,000 unless stated otherwise.
+
+```{r overview-table}
+# Put the main annual mortality measures in one table
+year_summary <- national_total %>%
+  select(year, deaths, population, crude_rate = death_rate_per_100000) %>%
+  left_join(
+    national_sex %>%
+      select(year, sex, death_rate_per_100000) %>%
+      mutate(sex = paste0(sex, "_rate")) %>%
+      pivot_wider(names_from = sex, values_from = death_rate_per_100000),
+    by = "year"
+  ) %>%
+  left_join(
+    national_age_broad %>%
+      select(year, age_group_broad, death_rate_per_100000) %>%
+      mutate(
+        age_group_broad = recode(
+          age_group_broad,
+          "0-4" = "age_0_4_rate",
+          "5-64" = "age_5_64_rate",
+          "65+" = "age_65_plus_rate"
+        )
+      ) %>%
+      pivot_wider(names_from = age_group_broad, values_from = death_rate_per_100000),
+    by = "year"
+  ) %>%
+  arrange(year)
+
+# Format counts and rates for the HTML table
+year_summary %>%
+  mutate(
+    deaths = comma(deaths),
+    population = comma(round(population)),
+    across(ends_with("_rate"), ~ number(.x, accuracy = 0.1))
+  ) %>%
+  knitr::kable(
+    format = "html",
+    col.names = c(
+      "Year", "Deaths", "Population", "Crude rate", "Female rate",
+      "Male rate", "0–4 rate", "5–64 rate", "65+ rate"
+    ),
+    align = "rrrrrrrrr"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  scroll_box(width = "100%", height = "420px")
+```
+
+
+# National trends
+
+```{r national-rate}
+# National crude mortality rate over time
+national_rate_plot <- ggplot(national_total, aes(year, death_rate_per_100000)) +
+  geom_line(linewidth = 0.9, color = "#2f5d62") +
+  geom_point(size = 1.8, color = "#2f5d62") +
+  scale_x_continuous(breaks = seq(2006, 2024, by = 2)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "National death rate", x = NULL, y = "Deaths per 100,000")
+
+ggplotly(national_rate_plot)
+```
+
+```{r national-deaths-population}
+# Plot deaths and population separately because they are on very different scales
+national_long <- national_total %>%
+  select(year, deaths, population) %>%
+  pivot_longer(cols = c(deaths, population), names_to = "series", values_to = "value") %>%
+  mutate(series = recode(series, deaths = "Deaths", population = "Population"))
+
+national_deaths_population_plot <- ggplot(national_long, aes(year, value, color = series)) +
+  geom_line(linewidth = 0.9) +
+  facet_wrap(~series, scales = "free_y", ncol = 1) +
+  scale_x_continuous(breaks = seq(2006, 2024, by = 2)) +
+  scale_y_continuous(labels = comma) +
+  guides(color = "none") +
+  labs(title = "Deaths and population", x = NULL, y = NULL)
+
+ggplotly(national_deaths_population_plot)
+```
+
+
+# Sex
+
+```{r sex-rate}
+# Compare national mortality rates for men and women
+sex_rate_plot <- ggplot(national_sex, aes(year, death_rate_per_100000, color = sex)) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.4) +
+  scale_x_continuous(breaks = seq(2006, 2024, by = 2)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Death rate by sex", x = NULL, y = "Deaths per 100,000", color = NULL)
+
+ggplotly(sex_rate_plot)
+```
+
+
+# Age
+
+```{r broad-age-rate}
+# Keep the broad age groups in the same order across figures
+national_age_broad <- national_age_broad %>%
+  mutate(age_group_broad = factor(age_group_broad, levels = c("0-4", "5-64", "65+")))
+
+# National rates for the three broad age groups
+broad_age_rate_plot <- ggplot(
+  national_age_broad,
+  aes(year, death_rate_per_100000, color = age_group_broad)
+) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.4) +
+  scale_x_continuous(breaks = seq(2006, 2024, by = 2)) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Death rate by broad age group",
+    x = NULL, y = "Deaths per 100,000", color = "Age group"
+  )
+
+ggplotly(broad_age_rate_plot)
+```
+
+```{r broad-age-sex-rate}
+# Use the same age-group ordering for the age-by-sex figure
+national_age_broad_sex <- national_age_broad_sex %>%
+  mutate(age_group_broad = factor(age_group_broad, levels = c("0-4", "5-64", "65+")))
+
+# Compare male and female rates within each broad age group
+broad_age_sex_rate_plot <- ggplot(
+  national_age_broad_sex,
+  aes(year, death_rate_per_100000, color = sex)
+) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~age_group_broad, scales = "free_y") +
+  scale_x_continuous(breaks = seq(2006, 2024, by = 4)) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Death rate by broad age group and sex",
+    x = NULL, y = "Deaths per 100,000", color = NULL
+  )
+
+ggplotly(broad_age_sex_rate_plot)
+```
+
+```{r standard-age-heatmap}
+# Order the more detailed age groups from youngest to oldest
+standard_age_levels <- c(
+  "0", "1-4", "5-14", "15-24", "25-34", "35-44",
+  "45-54", "55-64", "65-74", "75-79", "80+"
+)
+
+standard_age_rates <- national_age_standard %>%
+  mutate(age_group_standard = factor(age_group_standard, levels = standard_age_levels))
+
+# Heatmap makes it easier to see age-specific changes across years
+standard_age_heatmap <- ggplot(
+  standard_age_rates,
+  aes(year, age_group_standard, fill = death_rate_per_100000)
+) +
+  geom_tile(color = "white", linewidth = 0.25) +
+  scale_x_continuous(breaks = seq(2006, 2024, by = 2), expand = c(0, 0)) +
+  scale_fill_viridis_c(
+    option = "magma", direction = -1, labels = comma,
+    name = "Deaths per 100,000"
+  ) +
+  labs(title = "Death rate by age group", x = NULL, y = NULL) +
+  theme(panel.grid = element_blank())
+
+ggplotly(standard_age_heatmap)
+```
+
+
+# Monthly rates
+
+The monthly rate is annualized using the number of days in each month and year.
+
+```{r monthly-rate-heatmap}
+# Put broad age groups in the usual order and create a monthly date
+monthly_rates <- national_month_age_broad %>%
+  mutate(
+    age_group_broad = factor(age_group_broad, levels = c("0-4", "5-64", "65+")),
+    month_date = as.Date(sprintf("%d-%02d-01", year, month))
+  )
+
+# Show monthly variation across age groups and years
+monthly_rate_heatmap <- ggplot(
+  monthly_rates,
+  aes(month_date, age_group_broad, fill = annualized_rate_per_100000_person_years)
+) +
+  geom_tile(color = "white", linewidth = 0.12) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y", expand = c(0, 0)) +
+  scale_fill_viridis_c(
+    option = "magma", direction = -1, labels = comma,
+    name = "Annualized rate"
+  ) +
+  labs(title = "Monthly death rate by broad age group", x = NULL, y = NULL) +
+  theme(panel.grid = element_blank())
+
+ggplotly(monthly_rate_heatmap)
+```
+
+
+# ADM3 rate distributions
+
+Raw and winsorized views. Winsorization is only for display.
+
+```{r adm3-total-rate-distribution}
+# Keep ADM3-years with a valid rate and positive population
+adm3_total_dist <- adm3_total %>%
+  filter(!is.na(death_rate_per_100000), population > 0)
+
+# Cap plotted values at the 99.9th percentile so a few extreme rates do not
+# determine the scale of every figure
+adm3_rate_cutoff <- quantile(
+  adm3_total_dist$death_rate_per_100000,
+  probs = 0.999, na.rm = TRUE
+)
+
+adm3_total_dist <- adm3_total_dist %>%
+  mutate(
+    death_rate_display_per_100000 = if_else(
+      death_rate_per_100000 > adm3_rate_cutoff,
+      as.numeric(adm3_rate_cutoff), death_rate_per_100000
+    ),
+    rate_winsorized = death_rate_per_100000 > adm3_rate_cutoff,
+
+    # Keep the original rate in the tooltip even when the plotted value is capped
+    tooltip = paste0(
+      "ADM3: ", shp_adm3_name, " (", shp_adm3_code, ")",
+      "<br>Year: ", year,
+      "<br>Deaths: ", comma(round(deaths)),
+      "<br>Population: ", comma(round(population)),
+      "<br>Rate: ", number(death_rate_per_100000, accuracy = 0.1), " per 100,000",
+      "<br>Winsorized: ", if_else(rate_winsorized, "yes", "no"),
+      "<br>Winsorized value: ",
+      number(death_rate_display_per_100000, accuracy = 0.1), " per 100,000"
+    )
+  )
+
+# Report how much of the distribution is affected by the display cutoff
+adm3_total_dist %>%
+  summarise(
+    `Cutoff percentile` = "99.9%",
+    `Cutoff rate` = adm3_rate_cutoff,
+    `ADM3-years winsorized` = sum(rate_winsorized),
+    `Percent winsorized` = mean(rate_winsorized),
+    `Maximum rate` = max(death_rate_per_100000)
+  ) %>%
+  mutate(
+    `Cutoff rate` = number(`Cutoff rate`, accuracy = 0.1),
+    `Percent winsorized` = percent(`Percent winsorized`, accuracy = 0.001),
+    `Maximum rate` = number(`Maximum rate`, accuracy = 0.1)
+  ) %>%
+  knitr::kable(format = "html", align = "lrrrr") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  )
+```
+
+```{r adm3-total-rate-histogram}
+# Compare the raw distribution with the display-winsorized version
+adm3_hist_data <- bind_rows(
+  adm3_total_dist %>%
+    transmute(series = "Raw rates", rate = death_rate_per_100000),
+  adm3_total_dist %>%
+    transmute(series = "Winsorized rates", rate = death_rate_display_per_100000)
+)
+
+p <- adm3_hist_data %>%
+  ggplot(aes(rate)) +
+  geom_histogram(bins = 70, fill = "#2f5d62", color = "white") +
+  facet_wrap(~series, ncol = 1) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  coord_cartesian(ylim = c(0, 1500)) +
+  labs(title = "Rate distribution", x = "Deaths per 100,000", y = "ADM3-years")
+
+ggplotly(p)
+```
+
+```{r adm3-total-rate-boxplot}
+# Build raw and winsorized versions of the same ADM3-year observations
+adm3_box_data <- bind_rows(
+  adm3_total_dist %>%
+    transmute(
+      year, shp_adm3_name, shp_adm3_code, deaths, population,
+      rate_winsorized, death_rate_display_per_100000,
+      series = "Raw rates", rate = death_rate_per_100000
+    ),
+  adm3_total_dist %>%
+    transmute(
+      year, shp_adm3_name, shp_adm3_code, deaths, population,
+      rate_winsorized, death_rate_display_per_100000,
+      series = "Winsorized rates", rate = death_rate_display_per_100000
+    )
+) %>%
+  mutate(year = factor(year)) %>%
+
+  # Identify observations outside the usual 1.5-IQR whiskers within each year
+  group_by(series, year) %>%
+  mutate(
+    q1 = quantile(rate, 0.25, na.rm = TRUE),
+    q3 = quantile(rate, 0.75, na.rm = TRUE),
+    iqr = q3 - q1,
+    lower_whisker = q1 - 1.5 * iqr,
+    upper_whisker = q3 + 1.5 * iqr,
+    outside_whisker = rate < lower_whisker | rate > upper_whisker
+  ) %>%
+  ungroup() %>%
+
+  # Add details for the interactive outlier points
+  mutate(
+    tooltip_plot = paste0(
+      "ADM3: ", shp_adm3_name, " (", shp_adm3_code, ")",
+      "<br>Year: ", year,
+      "<br>Deaths: ", comma(round(deaths)),
+      "<br>Population: ", comma(round(population)),
+      "<br>Rate: ", number(rate, accuracy = 0.1), " per 100,000",
+      "<br>Winsorized: ", if_else(rate_winsorized, "yes", "no"),
+      "<br>Winsorized value: ",
+      number(death_rate_display_per_100000, accuracy = 0.1), " per 100,000"
+    )
+  )
+
+# Plot boxplots without the default outlier points, then add interactive ones
+p <- ggplot(adm3_box_data, aes(year, rate)) +
+  geom_boxplot(outlier.shape = NA, fill = "#b9d8d8", color = "#244b4f") +
+  geom_point(
+    data = adm3_box_data %>% filter(outside_whisker),
+    aes(text = tooltip_plot),
+    position = position_jitter(width = 0.12, height = 0),
+    alpha = 0.35, size = 0.7, color = "#244b4f"
+  ) +
+  facet_wrap(~series, ncol = 1) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Rates by year", x = NULL, y = "Deaths per 100,000")
+
+ggplotly(p, tooltip = "text")
+```
+
+```{r adm3-population-rate-scatter}
+# Check whether extreme rates are concentrated in small-population ADM3s
+p <- adm3_total_dist %>%
+  ggplot(aes(
+    population, death_rate_per_100000,
+    color = factor(year), text = tooltip
+  )) +
+  geom_point(alpha = 0.35, size = 1.3) +
+  scale_x_log10(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Population and rates",
+    x = "Population, log scale",
+    y = "Deaths per 100,000",
+    color = "Year"
+  )
+
+ggplotly(p, tooltip = "text")
+```
+
+```{r adm3-broad-age-rate-distribution, fig.width=14, fig.height=4.5}
+# Keep valid age-specific ADM3-year rates
+adm3_age_dist <- adm3_age_broad %>%
+  filter(!is.na(death_rate_per_100000), population > 0)
+
+# Use the same display-only 99.9th-percentile cutoff for the age-specific rates
+adm3_age_rate_cutoff <- quantile(
+  adm3_age_dist$death_rate_per_100000,
+  probs = 0.999, na.rm = TRUE
+)
+
+adm3_age_dist <- adm3_age_dist %>%
+  mutate(
+    death_rate_display_per_100000 = if_else(
+      death_rate_per_100000 > adm3_age_rate_cutoff,
+      as.numeric(adm3_age_rate_cutoff), death_rate_per_100000
+    ),
+    rate_winsorized = death_rate_per_100000 > adm3_age_rate_cutoff,
+
+    # Tooltip keeps both the original and displayed rates
+    tooltip = paste0(
+      "ADM3: ", shp_adm3_name, " (", shp_adm3_code, ")",
+      "<br>Year: ", year,
+      "<br>Age group: ", age_group_broad,
+      "<br>Deaths: ", comma(round(deaths)),
+      "<br>Population: ", comma(round(population)),
+      "<br>Rate: ", number(death_rate_per_100000, accuracy = 0.1), " per 100,000",
+      "<br>Winsorized: ", if_else(rate_winsorized, "yes", "no"),
+      "<br>Winsorized value: ",
+      number(death_rate_display_per_100000, accuracy = 0.1), " per 100,000"
+    )
+  )
+
+# Raw and winsorized versions for each age group
+adm3_age_box_data <- bind_rows(
+  adm3_age_dist %>%
+    transmute(
+      year, age_group_broad, shp_adm3_name, shp_adm3_code,
+      deaths, population, rate_winsorized, death_rate_display_per_100000,
+      series = "Raw rates", rate = death_rate_per_100000
+    ),
+  adm3_age_dist %>%
+    transmute(
+      year, age_group_broad, shp_adm3_name, shp_adm3_code,
+      deaths, population, rate_winsorized, death_rate_display_per_100000,
+      series = "Winsorized rates", rate = death_rate_display_per_100000
+    )
+) %>%
+  mutate(year = factor(year)) %>%
+
+  # Identify boxplot outliers separately by age group and year
+  group_by(series, age_group_broad, year) %>%
+  mutate(
+    q1 = quantile(rate, 0.25, na.rm = TRUE),
+    q3 = quantile(rate, 0.75, na.rm = TRUE),
+    iqr = q3 - q1,
+    lower_whisker = q1 - 1.5 * iqr,
+    upper_whisker = q3 + 1.5 * iqr,
+    outside_whisker = rate < lower_whisker | rate > upper_whisker
+  ) %>%
+  ungroup() %>%
+
+  # Details shown when hovering over the outlier points
+  mutate(
+    tooltip = paste0(
+      "ADM3: ", shp_adm3_name, " (", shp_adm3_code, ")",
+      "<br>Year: ", year,
+      "<br>Age group: ", age_group_broad,
+      "<br>Deaths: ", comma(round(deaths)),
+      "<br>Population: ", comma(round(population)),
+      "<br>Rate: ", number(rate, accuracy = 0.1), " per 100,000",
+      "<br>Winsorized: ", if_else(rate_winsorized, "yes", "no"),
+      "<br>Winsorized value: ",
+      number(death_rate_display_per_100000, accuracy = 0.1), " per 100,000"
+    )
+  )
+
+# Compare the age-specific distributions over time
+p <- ggplot(adm3_age_box_data, aes(year, rate)) +
+  geom_boxplot(outlier.shape = NA, fill = "#decbe4", color = "#4d3b5c") +
+  geom_point(
+    data = adm3_age_box_data %>% filter(outside_whisker),
+    aes(text = tooltip),
+    position = position_jitter(width = 0.12, height = 0),
+    alpha = 0.3, size = 0.55, color = "#4d3b5c"
+  ) +
+  facet_grid(series ~ age_group_broad, scales = "free_y") +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Rates by age", x = NULL, y = "Deaths per 100,000")
+
+ggplotly(p, tooltip = "text")
+```
+
+```{r adm3-broad-age-population-scatter}
+# Check the population-rate relationship separately for each broad age group
+p <- adm3_age_dist %>%
+  ggplot(aes(
+    population, death_rate_per_100000,
+    color = age_group_broad, text = tooltip
+  )) +
+  geom_point(alpha = 0.35, size = 1.3) +
+  facet_wrap(~age_group_broad, scales = "free_y") +
+  scale_x_log10(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    title = "Population and age rates",
+    x = "Age-group population, log scale",
+    y = "Deaths per 100,000",
+    color = "Age group"
+  )
+
+ggplotly(p, tooltip = "text")
+```
+
+
+# Causes of death
+
+```{r causes-table}
+# Show the cause-of-death totals used for the descriptive review
+cause_summary %>%
+  mutate(deaths = comma(deaths)) %>%
+  select(`ICD-10 code` = cause_code_3d, Cause = cause_name, Deaths = deaths) %>%
+  knitr::kable(format = "html", align = "llr") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  scroll_box(width = "100%", height = "360px")
+```
+
+
+# ADM3 maps
+
+```{r read-adm3-shape, include=FALSE}
+# Read the current ADM3 boundaries
+adm3_shape <- st_read(
+  shape_dir, layer = "PH_Adm3_MuniCities.shp", quiet = TRUE
+) %>%
+  mutate(
+    # Format the shapefile PSGC values to match the mortality-rate codes
+    shp_adm3_code = str_pad(
+      str_replace_all(as.character(adm3_psgc), "[^0-9]", ""),
+      width = 10, side = "left", pad = "0"
+    ),
+
+    # Fix the two city codes that do not match after the generic padding step
+    shp_adm3_code = case_when(
+      shp_adm3_code == "0000063108" ~ "0631000000",
+      shp_adm3_code == "0000138109" ~ "1381000000",
+      adm3_en == "City of Iloilo" ~ "0631000000",
+      adm3_en == "City of Parañaque" ~ "1381000000",
+      TRUE ~ shp_adm3_code
+    )
+  ) %>%
+  select(shp_adm3_code, geometry)
+
+# Simplify a copy of the boundaries for the interactive maps
+adm3_leaflet_shape <- adm3_shape %>%
+  st_transform(4326) %>%
+  st_simplify(dTolerance = 0.05, preserveTopology = TRUE)
+
+# Check that mortality and shapefile ADM3 codes match before mapping
+shape_codes <- sort(unique(adm3_shape$shp_adm3_code))
+rate_codes <- sort(unique(adm3_total$shp_adm3_code))
+
+shape_not_rates <- setdiff(shape_codes, rate_codes)
+rates_not_shape <- setdiff(rate_codes, shape_codes)
+
+if (length(shape_not_rates) > 0 || length(rates_not_shape) > 0) {
+  stop(
+    "ADM3 shapefile/rate code mismatch.\n",
+    "Shape not rates: ", paste(shape_not_rates, collapse = ", "), "\n",
+    "Rates not shape: ", paste(rates_not_shape, collapse = ", ")
+  )
+}
+```
+
+
+# Interpolated population checks
+
+These checks are for the annual population denominator created by `02_Population/03_interpolate_population.R`.
+
+The main things to check are:
+
+- the annual file exactly reproduces the census years and the 2024 ADM3 total controls
+- the national series does not have an obvious artificial kink
+- individual ADM3 units with large changes look explainable rather than mechanical errors
+- population and growth outliers are not concentrated in a suspicious geography
+
+```{r population-interpolation-build-checks}
+# Collapse the annual age-sex file to ADM3 totals
+annual_pop_totals <- annual_pop %>%
+  group_by(
+    year, shp_adm1_code, shp_adm1_name, shp_adm2_code, shp_adm2_name,
+    shp_adm3_code, shp_adm3_name, psgc_adm3_code, psgc_adm3_name
+  ) %>%
+  summarise(population = sum(population, na.rm = TRUE), .groups = "drop")
+
+# Build matching ADM3 totals for the census anchor years
+census_pop_totals <- census_pop %>%
+  group_by(census_year, shp_adm3_code) %>%
+  summarise(census_population = sum(population, na.rm = TRUE), .groups = "drop")
+
+# Read the 2024 PSGC ADM3 population controls
+controls_2024 <- psgc_pop_controls %>%
+  transmute(
+    psgc_adm3_code = municipalicity_code,
+    control_population = as.numeric(gsub("[^0-9.]", "", municipalicity_2024_pop))
+  ) %>%
+  filter(!is.na(psgc_adm3_code))
+
+# Check that interpolation reproduces the observed census years
+census_anchor_check <- annual_pop_totals %>%
+  filter(year %in% c(2007, 2010, 2015, 2020)) %>%
+  select(year, shp_adm3_code, shp_adm3_name, annual_population = population) %>%
+  left_join(
+    census_pop_totals,
+    by = c("year" = "census_year", "shp_adm3_code")
+  ) %>%
+  mutate(
+    anchor_type = "Census",
+    anchor_population = census_population,
+    difference = annual_population - anchor_population,
+    abs_difference = abs(difference)
+  ) %>%
+  select(
+    anchor_type, year, shp_adm3_code, shp_adm3_name,
+    annual_population, anchor_population, difference, abs_difference
+  )
+
+# Check the final 2024 values against the PSGC controls
+control_2024_check <- annual_pop_totals %>%
+  filter(year == 2024) %>%
+  select(
+    year, shp_adm3_code, shp_adm3_name, psgc_adm3_code,
+    annual_population = population
+  ) %>%
+  left_join(controls_2024, by = "psgc_adm3_code") %>%
+  mutate(
+    anchor_type = "2024 PSGC control",
+    anchor_population = control_population,
+    difference = annual_population - anchor_population,
+    abs_difference = abs(difference)
+  ) %>%
+  select(
+    anchor_type, year, shp_adm3_code, shp_adm3_name,
+    annual_population, anchor_population, difference, abs_difference
+  )
+
+# Combine the census and 2024 checks
+population_anchor_check <- bind_rows(census_anchor_check, control_2024_check)
+
+# Summarize whether any anchor observations differ from the annual file
+population_anchor_summary <- population_anchor_check %>%
+  group_by(anchor_type, year) %>%
+  summarise(
+    n_adm3 = n(),
+    max_abs_difference = max(abs_difference, na.rm = TRUE),
+    rows_over_tolerance = sum(abs_difference > 1e-6, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Calculate annual ADM3 changes to identify unusual population series
+adm3_population_growth <- annual_pop_totals %>%
+  arrange(shp_adm3_code, year) %>%
+  group_by(shp_adm3_code) %>%
+  mutate(
+    lag_population = lag(population),
+    annual_change = population - lag_population,
+    annual_pct_change = if_else(
+      lag_population > 0, annual_change / lag_population, NA_real_
+    )
+  ) %>%
+  ungroup()
+```
+
+```{r population-anchor-table}
+# Compact summary of the census and 2024 anchor checks
+population_anchor_summary %>%
+  knitr::kable(
+    format = "html", digits = 8,
+    col.names = c(
+      "Anchor type", "Year", "ADM3 rows",
+      "Max absolute difference", "Rows over tolerance"
+    )
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  )
+```
+
+```{r population-anchor-scatter}
+# Compare every interpolated anchor value directly with its source value
+population_anchor_scatter <- ggplot(
+  population_anchor_check,
+  aes(
+    x = anchor_population, y = annual_population, color = factor(year),
+    text = paste0(
+      shp_adm3_name,
+      "<br>Year: ", year,
+      "<br>Anchor: ", comma(round(anchor_population, 2)),
+      "<br>Annual: ", comma(round(annual_population, 2)),
+      "<br>Difference: ", round(difference, 8)
+    )
+  )
+) +
+  geom_abline(slope = 1, intercept = 0, color = "grey40") +
+  geom_point(alpha = 0.45, size = 1) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = "Anchor population", y = "Annual population",
+    color = "Year",
+    title = "Interpolated population passes through anchor years"
+  )
+
+ggplotly(population_anchor_scatter, tooltip = "text")
+```
+
+```{r interpolated-national-population}
+# Aggregate the interpolated ADM3 values to the national level
+national_population <- annual_pop_totals %>%
+  group_by(year) %>%
+  summarise(population = sum(population, na.rm = TRUE), .groups = "drop") %>%
+  mutate(is_anchor = year %in% c(2007, 2010, 2015, 2020, 2024))
+
+# Check visually for artificial jumps around the anchor years
+national_population_plot <- ggplot(
+  national_population,
+  aes(
+    x = year, y = population,
+    text = paste0("Year: ", year, "<br>Population: ", comma(round(population)))
+  )
+) +
+  geom_line(color = "#2c7fb8", linewidth = 0.8) +
+  geom_point(aes(color = is_anchor), size = 2.3) +
+  scale_color_manual(values = c("FALSE" = "#2c7fb8", "TRUE" = "#d95f0e")) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = NULL, y = "Population", color = "Anchor year",
+    title = "National annual population"
+  )
+
+ggplotly(national_population_plot, tooltip = "text")
+```
+
+```{r interpolated-adm3-population-sample}
+# Pick large, small, and fast-changing ADM3s for closer inspection
+sample_large <- annual_pop_totals %>%
+  filter(year == 2024) %>%
+  slice_max(population, n = 10, with_ties = FALSE) %>%
+  transmute(shp_adm3_code, group = "Largest 2024 population")
+
+sample_small <- annual_pop_totals %>%
+  filter(year == 2024, population > 0) %>%
+  slice_min(population, n = 10, with_ties = FALSE) %>%
+  transmute(shp_adm3_code, group = "Smallest 2024 population")
+
+sample_jump <- adm3_population_growth %>%
+  filter(!is.na(annual_pct_change)) %>%
+  group_by(shp_adm3_code) %>%
+  summarise(max_abs_pct_change = max(abs(annual_pct_change)), .groups = "drop") %>%
+  slice_max(max_abs_pct_change, n = 10, with_ties = FALSE) %>%
+  transmute(shp_adm3_code, group = "Largest annual percent change")
+
+# Keep each selected ADM3/group combination once
+sample_adm3 <- bind_rows(sample_large, sample_small, sample_jump) %>%
+  distinct(shp_adm3_code, group)
+
+sample_population_plot_data <- annual_pop_totals %>%
+  inner_join(sample_adm3, by = "shp_adm3_code")
+
+# Plot the selected population series over the full period
+sample_population_plot <- ggplot(
+  sample_population_plot_data,
+  aes(
+    x = year, y = population,
+    color = shp_adm3_name, group = shp_adm3_code,
+    text = paste0(
+      shp_adm3_name,
+      "<br>Year: ", year,
+      "<br>Population: ", comma(round(population))
+    )
+  )
+) +
+  geom_line(linewidth = 0.7) +
+  geom_point(size = 1.2) +
+  facet_wrap(~group, scales = "free_y") +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = NULL, y = "Population", color = "ADM3",
+    title = "Selected ADM3 population time series"
+  ) +
+  theme(legend.position = "none")
+
+ggplotly(sample_population_plot, tooltip = "text")
+```
+
+```{r interpolated-population-change-distribution}
+# Distribution of year-to-year ADM3 population changes
+population_change_histogram <- ggplot(
+  adm3_population_growth %>% filter(!is.na(annual_pct_change)),
+  aes(x = annual_pct_change)
+) +
+  geom_histogram(bins = 80, fill = "#2c7fb8", color = "white") +
+  scale_x_continuous(labels = percent) +
+  labs(
+    x = "One-year percent change in ADM3 total population",
+    y = "ADM3-years",
+    title = "Distribution of annual ADM3 population changes"
+  )
+
+ggplotly(population_change_histogram)
+```
+
+```{r interpolated-population-top-changes}
+# List the largest one-year population changes for manual review
+adm3_population_growth %>%
+  filter(!is.na(annual_pct_change)) %>%
+  arrange(desc(abs(annual_pct_change))) %>%
+  transmute(
+    Year = year, ADM1 = shp_adm1_name, ADM2 = shp_adm2_name, ADM3 = shp_adm3_name,
+    `Population previous year` = round(lag_population, 2),
+    `Population this year` = round(population, 2),
+    `One-year pct change` = percent(annual_pct_change, accuracy = 0.01)
+  ) %>%
+  head(50) %>%
+  knitr::kable(format = "html", align = "llllrrr") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = TRUE
+  ) %>%
+  scroll_box(width = "100%", height = "420px")
+```
+
+```{r interpolated-population-2024-map, fig.width=9, fig.height=8}
+# Join 2024 population totals to the ADM3 boundaries
+population_2024_map <- adm3_leaflet_shape %>%
+  left_join(
+    annual_pop_totals %>% filter(year == 2024),
+    by = "shp_adm3_code"
+  )
+
+# Map the geographic distribution of the 2024 population denominator
+ggplot(population_2024_map) +
+  geom_sf(aes(fill = population), color = NA) +
+  scale_fill_viridis_c(
+    labels = comma, option = "magma", trans = "log10",
+    guide = guide_colorbar(
+      barwidth = grid::unit(12, "cm"),
+      barheight = grid::unit(0.35, "cm")
+    )
+  ) +
+  labs(
+    fill = "Population",
+    title = "2024 ADM3 population",
+    subtitle = "Log color scale"
+  ) +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+```{r interpolated-population-max-change-map, fig.width=9, fig.height=8}
+# Keep the largest absolute one-year population change for each ADM3
+max_population_change <- adm3_population_growth %>%
+  filter(!is.na(annual_pct_change)) %>%
+  group_by(shp_adm3_code) %>%
+  summarise(
+    max_abs_annual_pct_change = max(abs(annual_pct_change), na.rm = TRUE),
+    year_of_max_change = year[which.max(abs(annual_pct_change))],
+    .groups = "drop"
+  )
+
+# Join those maximum changes to the map
+population_change_map <- adm3_leaflet_shape %>%
+  left_join(max_population_change, by = "shp_adm3_code")
+
+# Check whether the largest changes cluster geographically
+ggplot(population_change_map) +
+  geom_sf(aes(fill = max_abs_annual_pct_change), color = NA) +
+  scale_fill_viridis_c(
+    labels = percent, option = "plasma",
+    guide = guide_colorbar(
+      barwidth = grid::unit(12, "cm"),
+      barheight = grid::unit(0.35, "cm")
+    )
+  ) +
+  labs(
+    fill = "Max one-year change",
+    title = "Largest absolute one-year ADM3 population change, 2006-2024"
+  ) +
+  theme_void() +
+  theme(legend.position = "bottom")
+```
+
+```{r static-map, fig.width=13, fig.height=8}
+# Selected years for a cross-section of the ADM3 mortality maps
+map_years <- c(2006, 2015, 2020, 2024)
+
+# Join mortality rates for those years to the ADM3 boundaries
+map_data <- adm3_leaflet_shape %>%
+  left_join(
+    adm3_total %>%
+      filter(year %in% map_years) %>%
+      select(year, shp_adm3_code, population, deaths, death_rate_per_100000),
+    by = "shp_adm3_code"
+  ) %>%
+  filter(!is.na(year))
+
+# Static comparison of the spatial pattern across selected years
+ggplot(map_data) +
+  geom_sf(aes(fill = death_rate_per_100000), color = NA) +
+  facet_wrap(~year, ncol = 2) +
+  coord_sf(expand = FALSE, datum = NA) +
+  scale_fill_viridis_c(
+    option = "magma", direction = -1, labels = comma,
+    name = "Deaths per 100,000", na.value = "grey90",
+    guide = guide_colorbar(
+      barwidth = grid::unit(12, "cm"),
+      barheight = grid::unit(0.35, "cm")
+    )
+  ) +
+  labs(title = "ADM3 residence death rates") +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+```{r leaflet-map}
+# Add popup text to the same mortality-map data
+map_data_leaflet <- map_data %>%
+  st_drop_geometry() %>%
+  left_join(adm3_leaflet_shape, by = "shp_adm3_code") %>%
+  st_as_sf() %>%
+  mutate(
+    popup_text = paste0(
+      "<b>ADM3 code:</b> ", shp_adm3_code,
+      "<br><b>Year:</b> ", year,
+      "<br><b>Deaths:</b> ", comma(round(deaths)),
+      "<br><b>Population:</b> ", comma(round(population)),
+      "<br><b>Rate:</b> ",
+      number(death_rate_per_100000, accuracy = 0.1), " per 100,000"
+    )
+  )
+
+# Common color scale across map years
+pal <- colorNumeric(
+  palette = "magma",
+  domain = map_data_leaflet$death_rate_per_100000,
+  reverse = TRUE,
+  na.color = "#eeeeee"
+)
+
+leaflet_map <- leaflet(options = leafletOptions(preferCanvas = TRUE)) %>%
+  addProviderTiles(providers$CartoDB.Positron)
+
+# Add one switchable layer for each selected year
+for (map_year in map_years) {
+  layer_data <- map_data_leaflet %>%
+    filter(year == map_year)
+
+  leaflet_map <- leaflet_map %>%
+    addPolygons(
+      data = layer_data,
+      group = as.character(map_year),
+      fillColor = ~pal(death_rate_per_100000),
+      fillOpacity = 0.75,
+      color = "#444444",
+      weight = 0.2,
+      opacity = 0.6,
+      popup = ~popup_text,
+      highlightOptions = highlightOptions(
+        weight = 1.2, color = "#111111", bringToFront = TRUE
+      )
+    )
+}
+
+# Show the most recent year by default
+leaflet_map %>%
+  addLegend(
+    position = "bottomright",
+    pal = pal,
+    values = map_data_leaflet$death_rate_per_100000,
+    title = "Deaths per 100,000",
+    labFormat = labelFormat(transform = function(x) round(x, 0))
+  ) %>%
+  addLayersControl(
+    baseGroups = as.character(map_years),
+    options = layersControlOptions(collapsed = FALSE)
+  ) %>%
+  hideGroup(as.character(map_years[-length(map_years)]))
+```
+
+```{r max-rate-leaflet-map}
+# Keep the year with the highest observed mortality rate for each ADM3
+max_rate_data <- adm3_total %>%
+  filter(!is.na(death_rate_per_100000), population > 0) %>%
+  group_by(shp_adm3_code) %>%
+  arrange(desc(death_rate_per_100000), population, desc(deaths), .by_group = TRUE) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+# Join the maximum-rate observations to the boundaries
+max_rate_map <- adm3_leaflet_shape %>%
+  left_join(max_rate_data, by = "shp_adm3_code") %>%
+  mutate(
+    popup_text = paste0(
+      "<b>ADM3:</b> ", shp_adm3_name, " (", shp_adm3_code, ")",
+      "<br><b>Year of maximum:</b> ", year,
+      "<br><b>Maximum rate:</b> ",
+      number(death_rate_per_100000, accuracy = 0.1), " per 100,000",
+      "<br><b>Deaths:</b> ", comma(round(deaths)),
+      "<br><b>Population:</b> ", comma(round(population))
+    )
+  )
+
+# Color by each ADM3's highest observed rate
+max_rate_pal <- colorNumeric(
+  palette = "magma",
+  domain = max_rate_map$death_rate_per_100000,
+  reverse = TRUE,
+  na.color = "#eeeeee"
+)
+
+leaflet(max_rate_map, options = leafletOptions(preferCanvas = TRUE)) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    fillColor = ~max_rate_pal(death_rate_per_100000),
+    fillOpacity = 0.75,
+    color = "#444444",
+    weight = 0.2,
+    opacity = 0.6,
+    popup = ~popup_text,
+    highlightOptions = highlightOptions(
+      weight = 1.2, color = "#111111", bringToFront = TRUE
+    )
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    pal = max_rate_pal,
+    values = ~death_rate_per_100000,
+    title = "Max rate",
+    labFormat = labelFormat(transform = function(x) round(x, 0))
+  )
+```
+
+```{r sparse-flags-leaflet-map}
+# Summarize zero rates, extreme rates, and small populations for each ADM3
+sparse_flags <- adm3_total %>%
+  filter(!is.na(death_rate_per_100000), population > 0) %>%
+  group_by(shp_adm3_code) %>%
+  summarise(
+    shp_adm3_name = first(shp_adm3_name),
+    max_rate = max(death_rate_per_100000, na.rm = TRUE),
+    min_rate = min(death_rate_per_100000, na.rm = TRUE),
+    min_population = min(population, na.rm = TRUE),
+    zero_rate_years = sum(death_rate_per_100000 == 0, na.rm = TRUE),
+    extreme_100k_years = sum(death_rate_per_100000 >= 100000, na.rm = TRUE),
+    extreme_10k_years = sum(death_rate_per_100000 >= 10000, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+
+  # Combine the sparse/extreme indicators used for the map
+  mutate(
+    flag_count =
+      as.integer(max_rate >= 100000) +
+      as.integer(max_rate >= 10000) +
+      as.integer(min_rate == 0) +
+      as.integer(min_population < 100) +
+      as.integer(min_population < 500),
+    flag_group = case_when(
+      max_rate >= 100000 ~ "Rate >= 100,000",
+      max_rate >= 10000 ~ "Rate >= 10,000",
+      min_rate == 0 & min_population < 500 ~ "Zero rate and small population",
+      min_rate == 0 ~ "Zero rate",
+      min_population < 500 ~ "Small population",
+      TRUE ~ "No sparse flag"
+    )
+  )
+
+# Add the flags and summary statistics to the boundaries
+sparse_map <- adm3_leaflet_shape %>%
+  left_join(sparse_flags, by = "shp_adm3_code") %>%
+  mutate(
+    popup_text = paste0(
+      "<b>ADM3:</b> ", shp_adm3_name, " (", shp_adm3_code, ")",
+      "<br><b>Flag group:</b> ", flag_group,
+      "<br><b>Flag count:</b> ", flag_count,
+      "<br><b>Max rate:</b> ", number(max_rate, accuracy = 0.1), " per 100,000",
+      "<br><b>Min rate:</b> ", number(min_rate, accuracy = 0.1), " per 100,000",
+      "<br><b>Min population:</b> ", comma(round(min_population)),
+      "<br><b>Zero-rate years:</b> ", zero_rate_years,
+      "<br><b>Years rate >= 10,000:</b> ", extreme_10k_years,
+      "<br><b>Years rate >= 100,000:</b> ", extreme_100k_years
+    )
+  )
+
+# Fixed colors for the sparse/extreme categories
+sparse_pal <- colorFactor(
+  palette = c("#4d4d4d", "#d73027", "#fc8d59", "#91bfdb", "#4575b4", "#fdae61"),
+  domain = c(
+    "No sparse flag", "Rate >= 100,000", "Rate >= 10,000",
+    "Zero rate and small population", "Zero rate", "Small population"
+  ),
+  na.color = "#eeeeee"
+)
+
+# Map where zero/extreme rates and small populations occur
+leaflet(sparse_map, options = leafletOptions(preferCanvas = TRUE)) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    fillColor = ~sparse_pal(flag_group),
+    fillOpacity = 0.75,
+    color = "#444444",
+    weight = 0.2,
+    opacity = 0.6,
+    popup = ~popup_text,
+    highlightOptions = highlightOptions(
+      weight = 1.2, color = "#111111", bringToFront = TRUE
+    )
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    pal = sparse_pal,
+    values = ~flag_group,
+    title = "Sparse/extreme flag"
+  )
+```
+

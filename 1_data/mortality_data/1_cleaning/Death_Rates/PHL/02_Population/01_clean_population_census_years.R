@@ -33,13 +33,13 @@
 # Packages
 # -----------------------------
 
-  library(data.table)
-  library(dplyr)
-  library(readr)
-  library(readxl)
-  library(stringr)
-  library(tidyr)
-  library(writexl)
+library(data.table)
+library(dplyr)
+library(readr)
+library(readxl)
+library(stringr)
+library(tidyr)
+library(writexl)
 
 # running this script using slurm in rcc and specifying 4 CPUs for this job in my sbatch file 
 # so letting data.table use them when reading and grouping the large person-level census files 
@@ -52,7 +52,7 @@ setDTthreads(4)
 user_name <- Sys.getenv("USER", unset = Sys.info()[["user"]])
 repo_dir <- Sys.getenv("RAINFALL_MORTALITY_REPO")
 if (repo_dir == "") repo_dir <- file.path("/project/cil/home_dirs", user_name, "repos/rainfall-mortality-2026")
-source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/PHL/paths.R"))
+source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/Death_Rates/PHL/paths.R"))
 
 dir.create(population_clean_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -167,11 +167,11 @@ pop_2007_list <- vector("list", length(files_2007))
 # each file is reduced to grouped counts immediately
 for (i in seq_along(files_2007)) {
   file <- files_2007[i]
-
+  
   # Keep source metadata:
   source_file <- str_remove(file, fixed(str_c(dir_2007, "/")))
   message("2007: ", source_file)
-
+  
   # Read admin codes, sex, and age as text to preserve leading zeros
   pop_2007_list[[i]] <- fread(
     file,
@@ -188,7 +188,7 @@ for (i in seq_along(files_2007)) {
       mun_clean = str_remove(str_remove(str_trim(as.character(PMUN)), "^PH"), "\\.0$"),
       sex_clean = str_remove(str_trim(as.character(SEX)), "\\.0$"),
       age_clean = str_remove(str_trim(as.character(AGE)), "\\.0$"),
-
+      
       # reconstruct historical nine-digit ADM3 code
       # (from 2 region digits, 2 province digits, 2 municipality digits, and 000)
       region2 = str_pad(region_clean, 2, side = "left", pad = "0"),
@@ -201,7 +201,7 @@ for (i in seq_along(files_2007)) {
         str_detect(source_adm3_old_code, "^1339(0[1-9]|1[0-4])000$") ~ "133900000",
         TRUE ~ source_adm3_old_code
       ),
-
+      
       # Harmonize all census years to ages 0-79 plus a single 80+ category
       # remove invalid ages or sex codes before counting
       age = suppressWarnings(as.integer(age_clean)),
@@ -214,7 +214,7 @@ for (i in seq_along(files_2007)) {
       )
     ) %>%
     filter(!is.na(source_adm3_old_code), !is.na(age), !is.na(sex)) %>%
-
+    
     # Convert person records into population counts at the required level
     group_by(
       source_adm3_old_code,
@@ -281,11 +281,11 @@ pop_2010_list <- vector("list", length(files_2010))
 # same process as 2007 census cleaning above but we use Form 2 variable names here for 2010
 for (i in seq_along(files_2010)) {
   file <- files_2010[i]
-
+  
   # Keep a shorter source-file path for tracking inputs
   source_file <- str_remove(file, fixed(str_c(dir_2010, "/")))
   message("2010: ", source_file)
-
+  
   # REG, PRRCD, and MUN identify the admin unit; P3 is sex and P5 is age.
   pop_2010_list[[i]] <- fread(
     file,
@@ -306,7 +306,7 @@ for (i in seq_along(files_2010)) {
       province2 = str_sub(str_pad(province_clean, 4, side = "left", pad = "0"), 1, 2),
       mun2 = str_pad(mun_clean, 2, side = "left", pad = "0"),
       source_adm3_old_code = str_c(region2, province2, mun2, "000"),
-
+      
       # Apply the same special-code treatment and age/sex harmonization as 2007
       source_adm3_old_code = case_when(
         str_detect(source_adm3_old_code, "^1339(0[1-9]|1[0-4])000$") ~ "133900000",
@@ -322,7 +322,7 @@ for (i in seq_along(files_2010)) {
       )
     ) %>%
     filter(!is.na(source_adm3_old_code), !is.na(age), !is.na(sex)) %>%
-
+    
     # Count population by ADM3, age, and sex within each source file.
     group_by(
       source_adm3_old_code,
@@ -374,12 +374,12 @@ raw_2015 <- read_csv(
   col_types = cols(.default = col_character())
 )
 
-  # Keep only the age-sex columns
+# Keep only the age-sex columns
 age_cols_2015 <- names(raw_2015)[str_detect(names(raw_2015), "^[FM](Under_1|[0-9]+|100_Over)$")]
 
 pop_2015 <- raw_2015 %>%
   select(adm1_code, adm2_code, adm3_code, adm3_name, all_of(age_cols_2015)) %>%
-
+  
   # Reshape from one barangay row with many age-sex columns to one row per # barangay-age-sex cell
   pivot_longer(
     cols = all_of(age_cols_2015),
@@ -393,7 +393,7 @@ pop_2015 <- raw_2015 %>%
       str_detect(source_adm3_old_code, "^1339(0[1-9]|1[0-4])000$") ~ "133900000",
       TRUE ~ source_adm3_old_code
     ),
-
+    
     # Age-sex columns start with M/F, followed by the age label 
     # Collapse 80+ to match the other census years
     age_text = str_sub(age_sex_column, 2),
@@ -415,7 +415,7 @@ pop_2015 <- raw_2015 %>%
     source_adm3_name = str_squish(adm3_name)
   ) %>%
   filter(!is.na(source_adm3_old_code), !is.na(age), !is.na(sex)) %>%
-
+  
   # sum barangay cells to ADM3. Keep source names for checking code matches.
   group_by(source_adm3_old_code, age, age_group, sex) %>%
   summarise(
@@ -459,7 +459,7 @@ age_cols_2020 <- names(raw_2020)[str_detect(names(raw_2020), "^(Under 1|[0-9]+|8
 
 pop_2020 <- raw_2020 %>%
   select(Mun, BgyCode_new, BgyCode_old, all_of(age_cols_2020)) %>%
-
+  
   # Reshape to barangay-age-sex cells, then split the source column
   # into age and sex.
   pivot_longer(
@@ -478,7 +478,7 @@ pop_2020 <- raw_2020 %>%
     # Current codes use the first 7 digits; old codes use the first 6
     bgy_new_clean = str_remove(str_remove(str_trim(as.character(BgyCode_new)), "^PH"), "\\.0$"),
     bgy_old_clean = str_remove(str_remove(str_trim(as.character(BgyCode_old)), "^PH"), "\\.0$"),
-
+    
     # Build current and historical ADM3 codes
     # handling special cases 13806 and 1339 
     source_adm3_new_code = case_when(
@@ -491,7 +491,7 @@ pop_2020 <- raw_2020 %>%
       nchar(bgy_old_clean) == 9 ~ str_c(str_sub(bgy_old_clean, 1, 6), "000"),
       TRUE ~ NA
     ),
-
+    
     # Same age/sex format as the earlier census years
     age_number = suppressWarnings(as.integer(age_text)),
     age = case_when(
@@ -511,7 +511,7 @@ pop_2020 <- raw_2020 %>%
     source_adm3_name = str_squish(Mun)
   ) %>%
   filter(!is.na(age), !is.na(sex)) %>%
-
+  
   # Sum barangay cells to ADM3, keeping both old and new codes
   # The old code is still needed as a fallback in the match below
   group_by(source_adm3_old_code, source_adm3_new_code, age, age_group, sex) %>%
@@ -636,7 +636,7 @@ pop_2020_linked <- pop_2020_current_match %>%
     ),
     geo_match_status = if_else(!is.na(shp_adm3_code), "matched_to_shapefile", "unmatched")
   ) %>%
-
+  
   # use same columns as earlier census years before combining all years
   select(all_of(names(pop_old_code_years)))
 
@@ -655,7 +655,7 @@ pop_census_years <- bind_rows(pop_old_code_years, pop_2020_linked) %>%
     shp_adm2_code, shp_adm2_name, shp_adm3_code, shp_adm3_name,
     age, age_group, sex, population, n_source_files, source_files,
     geo_match_method, geo_match_status
-    ) %>%
+  ) %>%
   arrange(census_year, shp_adm3_code, source_adm3_old_code,
           source_adm3_new_code, age, sex)
 
@@ -712,12 +712,8 @@ write_xlsx(
     "Geography Summary" = geography_summary,
     "Unmatched Places" = unmatched_places,
     "Duplicate Keys" = duplicate_keys,
-    "Population Totals" = year_sex_totals
-    
-    
-  ),
-  checks_file
-)
+    "Population Totals" = year_sex_totals),
+  checks_file)
 
 
 # Print outputs and checks 

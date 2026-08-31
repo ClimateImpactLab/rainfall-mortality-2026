@@ -1,18 +1,16 @@
 # ============================================================
 # 02_build_mortality_rates.R
 #
-# Build all-cause mortality rate tables using the cleaned death records and
+# Build all-cause mortality rate tables using ADM3-aligned death records and
 # annual ADM3 population estimates.
 #
-# Rates use residence ADM3 and resident population. Population is used as the
-# base table, so ADM3-years with no deaths are kept with zero deaths.
+# Rates use residence ADM3 and resident population. Deaths must already be
+# aligned to the same fixed ADM3 geography as population. Population is used as
+# the base table, so ADM3-years with no deaths are kept with zero deaths.
 #
 # The script produces:
-#   - annual rates for all ages
-#   - annual rates by sex
-#   - annual rates by single age and sex
-#   - annual rates for broad and standard age groups
-#   - annual monthly rates for broad age groups
+#   - annual and monthly rate tables for the full country
+#   - the same rate tables excluding BARMM, with _no_barmm suffixes
 #
 # Monthly rates use annual population, assuming population is constant within
 # each calendar year.
@@ -20,6 +18,9 @@
 # Deaths with unknown age or sex are included whenever those variables are not
 # required. Ages 80 and older are grouped together to match the population
 # estimates.
+#
+# The final panel uses the BARMM-excluded ADM3 annual all-age and broad-age
+# outputs.
 #
 # Outputs:
 #   Mortality/1_Clean/Death_Rates/*.csv
@@ -45,9 +46,9 @@ data.table::setDTthreads(4)
 user_name <- Sys.getenv("USER", unset = Sys.info()[["user"]])
 repo_dir <- Sys.getenv("RAINFALL_MORTALITY_REPO")
 if (repo_dir == "") repo_dir <- file.path("/project/cil/home_dirs", user_name, "repos/rainfall-mortality-2026")
-source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/PHL/paths.R"))
+source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/Death_Rates/PHL/paths.R"))
 
-mortality_file <- file.path(death_records_dir, "PHL_death_records.csv")
+mortality_file <- file.path(death_records_dir, "PHL_death_records_adm3_aligned.csv")
 population_file <- file.path(
   population_interpolated_dir,
   "PHL_population_annual_adm3.csv"
@@ -109,11 +110,12 @@ aggregate_population <- function(dimensions = character()) {
     summarise(population = sum(population, na.rm = TRUE), .groups = "drop")
 }
 
-# Count deaths at the same level
+# Sum deaths at the same level. Most records have weight 1. Boundary-aligned
+# records can have fractional weights, matching the population allocation.
 aggregate_deaths <- function(x, dimensions = character()) {
   x %>%
     group_by(across(all_of(c("year", "shp_adm3_code", dimensions)))) %>%
-    summarise(deaths = n(), .groups = "drop")
+    summarise(deaths = sum(death_weight, na.rm = TRUE), .groups = "drop")
 }
 
 # Keep population rows with no matching deaths
@@ -151,7 +153,7 @@ order_grouped_rate <- function(x, group_column, group_levels, trailing = charact
 
 mortality <- data.table::fread(mortality_file,
   select = c("year_file", "date_of_death_month", 
-             "sex", "age", "res_shp_adm3_code"),
+             "sex", "age", "res_shp_adm3_code", "death_weight"),
   colClasses = "character",
   showProgress = TRUE
 ) %>%
@@ -163,8 +165,11 @@ mortality <- mortality %>%
     year = suppressWarnings(as.integer(year_file)),
     month = suppressWarnings(as.integer(date_of_death_month)),
     month = if_else(month %in% 1:12, month, NA),
+    res_shp_adm3_code = na_if(trimws(res_shp_adm3_code), ""),
     age = suppressWarnings(as.integer(age)),
-    age = if_else(!is.na(age) & age >= 80, 80, age)
+    age = if_else(!is.na(age) & age >= 80, 80, age),
+    death_weight = suppressWarnings(as.numeric(death_weight)),
+    death_weight = if_else(is.na(death_weight), 1, death_weight)
   )
 
 # Keep only male/female codes for sex-specific rates.
@@ -408,12 +413,12 @@ national_month_age_broad <- adm3_month_age_broad %>%
 death_coverage_by_year <- mortality %>%
   group_by(year) %>%
   summarise(
-    deaths_input = n(),
-    valid_residence = sum(valid_residence),
-    valid_month = sum(valid_month),
-    valid_age = sum(valid_age),
-    valid_sex = sum(valid_sex),
-    valid_age_sex = sum(valid_age_sex),
+    deaths_input = sum(death_weight, na.rm = TRUE),
+    valid_residence = sum(if_else(valid_residence, death_weight, 0), na.rm = TRUE),
+    valid_month = sum(if_else(valid_month, death_weight, 0), na.rm = TRUE),
+    valid_age = sum(if_else(valid_age, death_weight, 0), na.rm = TRUE),
+    valid_sex = sum(if_else(valid_sex, death_weight, 0), na.rm = TRUE),
+    valid_age_sex = sum(if_else(valid_age_sex, death_weight, 0), na.rm = TRUE),
     missing_residence_adm3 = sum(is.na(shp_adm3_code)),
     missing_month = sum(is.na(month)),
     missing_age = sum(is.na(age)),
@@ -491,10 +496,100 @@ rate_keys <- list(
   national_month_age_broad = c("year", "month", "age_group_broad")
   )
 
+
+# -----------------------------
+# BARMM exclusion
+# -----------------------------
+
+# BARMM is dropped from the ADM3 rates used in the final panel
+# The full-country rates are still written
+barmm_region_name <- "Bangsamoro Autonomous Region In Muslim Mindanao (BARMM)"
+
+# Drop BARMM from tables that carry ADM1 names
+drop_barmm_rows <- function(x) {
+  if ("shp_adm1_name" %in% names(x)) {
+    x %>% filter(is.na(shp_adm1_name) | shp_adm1_name != barmm_region_name)
+  } else {
+    x
+  }
+}
+
+# Rebuild national rates after the ADM3 drop
+summarise_national_year <- function(x, dimensions = character()) {
+  x %>%
+    group_by(across(all_of(c("year", dimensions)))) %>%
+    summarise(
+      deaths = sum(deaths),
+      population = sum(population),
+      death_rate_per_100000 = deaths / population * 100000,
+      .groups = "drop"
+    )
+}
+
+# Apply the ADM3 drop to every subnational output
+adm3_year_total_no_barmm <- drop_barmm_rows(adm3_year_total)
+adm3_year_sex_no_barmm <- drop_barmm_rows(adm3_year_sex)
+adm3_year_age_sex_no_barmm <- drop_barmm_rows(adm3_year_age_sex)
+adm3_year_age_broad_no_barmm <- drop_barmm_rows(adm3_year_age_broad)
+adm3_year_age_broad_sex_no_barmm <- drop_barmm_rows(adm3_year_age_broad_sex)
+adm3_year_age_standard_no_barmm <- drop_barmm_rows(adm3_year_age_standard)
+adm3_year_age_standard_sex_no_barmm <- drop_barmm_rows(adm3_year_age_standard_sex)
+adm3_month_age_broad_no_barmm <- drop_barmm_rows(adm3_month_age_broad)
+
+# Recalculate annual national outputs without BARMM
+national_year_total_no_barmm <- summarise_national_year(adm3_year_total_no_barmm)
+national_year_sex_no_barmm <- summarise_national_year(adm3_year_sex_no_barmm, "sex")
+national_year_age_broad_no_barmm <- summarise_national_year(adm3_year_age_broad_no_barmm, "age_group_broad")
+national_year_age_broad_sex_no_barmm <- summarise_national_year(adm3_year_age_broad_sex_no_barmm, c("age_group_broad", "sex"))
+national_year_age_standard_no_barmm <- summarise_national_year(adm3_year_age_standard_no_barmm, "age_group_standard")
+
+# Recalculate monthly national outputs without BARMM
+national_month_age_broad_no_barmm <- adm3_month_age_broad_no_barmm %>%
+  group_by(year, month, age_group_broad) %>%
+  summarise(
+    deaths = sum(deaths),
+    population = sum(population),
+    person_years = sum(person_years),
+    monthly_deaths_per_100000 = deaths / population * 100000,
+    annualized_rate_per_100000_person_years =
+      deaths / person_years * 100000,
+    .groups = "drop"
+  )
+
+# Add the no-BARMM tables to the output list
+rate_tables_no_barmm <- list(
+  adm3_year_total_no_barmm = adm3_year_total_no_barmm,
+  adm3_year_sex_no_barmm = adm3_year_sex_no_barmm,
+  adm3_year_age_sex_no_barmm = adm3_year_age_sex_no_barmm,
+  adm3_year_age_broad_no_barmm = adm3_year_age_broad_no_barmm,
+  adm3_year_age_broad_sex_no_barmm = adm3_year_age_broad_sex_no_barmm,
+  adm3_year_age_standard_no_barmm = adm3_year_age_standard_no_barmm,
+  adm3_year_age_standard_sex_no_barmm = adm3_year_age_standard_sex_no_barmm,
+  adm3_month_age_broad_no_barmm = adm3_month_age_broad_no_barmm,
+  national_year_total_no_barmm = national_year_total_no_barmm,
+  national_year_sex_no_barmm = national_year_sex_no_barmm,
+  national_year_age_broad_no_barmm = national_year_age_broad_no_barmm,
+  national_year_age_broad_sex_no_barmm = national_year_age_broad_sex_no_barmm,
+  national_year_age_standard_no_barmm = national_year_age_standard_no_barmm,
+  national_month_age_broad_no_barmm = national_month_age_broad_no_barmm
+)
+
+# Use the same key definitions for the `_no_barmm` outputs
+rate_keys_no_barmm <- set_names(rate_keys, paste0(names(rate_keys), "_no_barmm"))
+
+# Write both full-country and no-BARMM tables
+all_rate_tables <- c(rate_tables, rate_tables_no_barmm)
+all_rate_keys <- c(rate_keys, rate_keys_no_barmm)
+
+
+# -----------------------------
+# Output checks
+# -----------------------------
+
 # Summarize row counts, death coverage, denominator problems, and key
 # uniqueness for every output
-output_summary <- imap_dfr(rate_tables, function(x, table_name) {
-  key_columns <- rate_keys[[table_name]]
+output_summary <- imap_dfr(all_rate_tables, function(x, table_name) {
+  key_columns <- all_rate_keys[[table_name]]
 
   x %>%
     summarise(
@@ -516,6 +611,49 @@ output_summary <- imap_dfr(rate_tables, function(x, table_name) {
       .before = 1
     )
 })
+
+barmm_exclusion_summary <- tibble::tibble(
+  metric = c(
+    "BARMM ADM3 units excluded",
+    "BARMM ADM3-years excluded",
+    "BARMM share of ADM3 units",
+    "BARMM share of ADM3-years",
+    "BARMM share of population over ADM3-years",
+    "High-population zero ADM3-years",
+    "High-population zero ADM3-years in BARMM",
+    "Low-rate ADM3-years below 100 per 100,000",
+    "Low-rate ADM3-years below 100 per 100,000 in BARMM"
+  ),
+  value = c(
+    n_distinct(adm3_year_total$shp_adm3_code[
+      adm3_year_total$shp_adm1_name == barmm_region_name
+    ]),
+    sum(adm3_year_total$shp_adm1_name == barmm_region_name),
+    n_distinct(adm3_year_total$shp_adm3_code[
+      adm3_year_total$shp_adm1_name == barmm_region_name
+    ]) / n_distinct(adm3_year_total$shp_adm3_code),
+    mean(adm3_year_total$shp_adm1_name == barmm_region_name),
+    sum(
+      adm3_year_total$population[
+        adm3_year_total$shp_adm1_name == barmm_region_name
+      ],
+      na.rm = TRUE
+    ) / sum(adm3_year_total$population, na.rm = TRUE),
+    sum(adm3_year_total$population >= 10000 & adm3_year_total$deaths == 0, na.rm = TRUE),
+    sum(
+      adm3_year_total$shp_adm1_name == barmm_region_name &
+        adm3_year_total$population >= 10000 &
+        adm3_year_total$deaths == 0,
+      na.rm = TRUE
+    ),
+    sum(adm3_year_total$death_rate_per_100000 < 100, na.rm = TRUE),
+    sum(
+      adm3_year_total$shp_adm1_name == barmm_region_name &
+        adm3_year_total$death_rate_per_100000 < 100,
+      na.rm = TRUE
+    )
+  )
+)
 
 # Stop before writing outputs if checks fail
 if (any(output_summary$duplicate_keys)) {
@@ -549,11 +687,11 @@ if (nrow(unmatched_age_sex_cells) > 0) {
 
 # Use the output names as CSV filename
 output_files <- set_names(
-  file.path(death_rates_dir, paste0(names(rate_tables), ".csv")),
-  names(rate_tables)
+  file.path(death_rates_dir, paste0(names(all_rate_tables), ".csv")),
+  names(all_rate_tables)
 )
 
-iwalk(rate_tables, ~ data.table::fwrite(.x, output_files[[.y]]))
+iwalk(all_rate_tables, ~ data.table::fwrite(.x, output_files[[.y]]))
 
 # Write checks to one workbook
 write_xlsx(
@@ -561,6 +699,7 @@ write_xlsx(
     "Output Summary" = output_summary,
     "Death Coverage By Year" = death_coverage_by_year,
     "Population Coverage By Year" = population_coverage_by_year,
+    "BARMM Exclusion Summary" = barmm_exclusion_summary,
     "Unmatched Residence Units" = unmatched_residence_units,
     "Unmatched Age Sex Cells" = unmatched_age_sex_cells,
     "Deaths With Zero Population" = deaths_with_zero_population

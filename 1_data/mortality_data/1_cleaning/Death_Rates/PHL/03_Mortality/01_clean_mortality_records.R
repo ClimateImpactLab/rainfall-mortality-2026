@@ -55,7 +55,7 @@ library(readr)
 user_name <- Sys.getenv("USER", unset = Sys.info()[["user"]])
 repo_dir <- Sys.getenv("RAINFALL_MORTALITY_REPO")
 if (repo_dir == "") repo_dir <- file.path("/project/cil/home_dirs", user_name, "repos/rainfall-mortality-2026")
-source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/PHL/paths.R"))
+source(file.path(repo_dir, "1_data/mortality_data/1_cleaning/Death_Rates/PHL/paths.R"))
 
 dir.create(death_records_dir, recursive = TRUE, showWarnings = FALSE)
 
