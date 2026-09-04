@@ -1,0 +1,172 @@
+---
+title: "Known Cyclone Dates: ERA5-Land Wind Check"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(dplyr)
+library(readr)
+library(knitr)
+library(kableExtra)
+```
+
+```{css, echo=FALSE}
+body {
+  color: #24313f;
+  font-size: 15px;
+}
+
+h1, h2, h3 {
+  color: #1f4e5f;
+}
+
+.main-container {
+  max-width: 1180px;
+}
+
+.table-scroll {
+  border: 1px solid #d9e2e7;
+  border-radius: 4px;
+}
+```
+
+```{r paths}
+USER <- Sys.getenv("USER")
+source("../../../0_utils/paths.R")
+
+# Outputs from 04_tc_event_spot_check.py
+input_dir <- file.path(
+  DIR_REPO_RAINFALL_MORTALITY, "output", "data", "wind_precip_confounding",
+  "tc_event_spot_check"
+)
+
+summary_file <- file.path(input_dir, "tc_event_summary.csv")
+top_admins_file <- file.path(input_dir, "tc_event_top_admins.csv")
+admin_day_file <- file.path(input_dir, "tc_event_admin_day.csv")
+```
+
+This report checks whether ERA5-Land daily wind shows clear spikes around 12
+major tropical cyclone events in our sample.
+
+The event list started from an AI-generated list of prominent storms. I checked
+each event manually before using it here.
+
+This is only a spot/sanity check. It is a quick way to check the wind data
+without using storm tracks. It doesn't identify all cyclone-exposed admin units.
+
+```{r read-data}
+summary <- read_csv(summary_file, show_col_types = FALSE)
+top_admins <- read_csv(top_admins_file, show_col_types = FALSE)
+admin_day <- read_csv(admin_day_file, show_col_types = FALSE)
+```
+
+```{r table-functions}
+# Format numbers, percentages, and dates for the tables
+fmt_num <- function(x, digits = 1) {
+  ifelse(is.na(x), "", format(round(x, digits), nsmall = digits, big.mark = ",", trim = TRUE))
+}
+
+fmt_pct <- function(x) {
+  ifelse(is.na(x), "", format(round(100 * x, 1), nsmall = 1, trim = TRUE))
+}
+
+fmt_date <- function(x) {
+  ifelse(is.na(x), "", format(as.Date(x), "%Y-%m-%d"))
+}
+
+show_table <- function(data, height = "520px") {
+  data %>%
+    kable(format = "html", escape = FALSE) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed"),
+      full_width = FALSE,
+      font_size = 13
+    ) %>%
+    scroll_box(width = "100%", height = height, extra_css = "border: 1px solid #d9e2e7;")
+}
+```
+
+## Event Summary
+
+One row per storm. This table shows where ERA5-Land wind is highest during each
+event window.
+
+```{r event-summary}
+summary %>%
+  transmute(
+    Storm = storm_name,
+    Country = country,
+    `Event date` = fmt_date(event_date),
+    `Known affected places` = known_places,
+    `Top admin by admin-mean wind` = top_pop_wind_place,
+    `Admin-mean wind max (m/s)` = fmt_num(top_pop_wind_ms),
+    `Date of admin-mean wind max` = fmt_date(top_pop_wind_date),
+    `Rain in that admin max (mm)` = fmt_num(top_pop_wind_admin_max_prcp_mm),
+    `Top admin by max grid-cell wind` = top_cell_wind_place,
+    `Max grid-cell wind (m/s)` = fmt_num(top_cell_wind_ms),
+    `Date of max grid-cell wind` = fmt_date(top_cell_wind_date)
+  ) %>%
+  show_table(height = "420px")
+```
+
+## Top Admin Units
+
+Top admin units for each storm, ranked by wind during the event window.
+
+```{r top-admins}
+top_admins %>%
+  transmute(
+    Storm = storm_name,
+    Country = country,
+    `Rank by admin-mean wind` = rank_by_wind_pop,
+    `Rank by max grid-cell wind` = rank_by_cell_wind_pop,
+    `Admin unit` = place_label,
+    `Region ID` = region_id,
+    `Admin-mean wind max (m/s)` = fmt_num(max_wind_pop_ms),
+    `Max grid-cell wind (m/s)` = fmt_num(max_cell_wind_pop_ms),
+    `Max pop share above 17.5 m/s (%)` = fmt_pct(max_pop_share_above_17p5),
+    `Max rain (mm)` = fmt_num(max_prcp_mm),
+    `Date of admin-mean wind max` = fmt_date(date_max_wind_pop),
+    `Date of max grid-cell wind` = fmt_date(date_max_cell_wind_pop),
+    `Date of max rain` = fmt_date(date_max_prcp)
+  ) %>%
+  show_table(height = "560px")
+```
+
+## Daily Values for Top 5 Admin Units
+
+Daily wind and rain values for the five highest-wind admin units in each storm.
+
+```{r daily-values}
+# Keep the five highest admin units by population-weighted mean wind
+top5_admins <- top_admins %>%
+  filter(rank_by_wind_pop <= 5) %>%
+  select(event_id, region_id, rank_by_wind_pop, place_label)
+
+# Keep daily values for those admin units
+admin_day %>%
+  inner_join(top5_admins, by = c("event_id", "region_id")) %>%
+  arrange(event_id, rank_by_wind_pop, date) %>%
+  transmute(
+    Storm = storm_name,
+    Country = country,
+    Date = fmt_date(date),
+    `Rank by admin-mean wind` = rank_by_wind_pop,
+    `Admin unit` = place_label,
+    `Region ID` = region_id,
+    `Admin-mean wind (m/s)` = fmt_num(windmax_pop_day),
+    `Max grid-cell wind (m/s)` = fmt_num(windcellmax_pop_day),
+    `Pop share above 17.5 m/s (%)` = fmt_pct(windshare_17p5_pop_day),
+    `Rain (mm)` = fmt_num(prcp_pop_p1)
+  ) %>%
+  show_table(height = "620px")
+```
