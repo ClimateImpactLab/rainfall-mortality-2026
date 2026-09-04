@@ -82,6 +82,8 @@ archive/
 
 * `diagnostics/profile_selection/02_income_cutoff_sensitivity.R`: varies the ADM1 income cutoff in the original profile definitions and counts how many rows, admin units, and countries remain
 
+* [`diagnostics/wind_precip_confounding/`](diagnostics/wind_precip_confounding/README.md): checks whether high-wind events overlap with extreme rainfall and whether this matters for the rainfall regressions
+
 ## Slurm jobs
 
 Use the scripts in `sbatch/` for longer or repeated runs:
