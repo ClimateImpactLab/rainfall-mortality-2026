@@ -46,7 +46,8 @@ library(fixest)
 
 args <- commandArgs(FALSE)
 
-# Use the value passed by sbatch, or the default if nothing is passed.
+# sbatch passes options like --outcome_model=poisson
+# If running this script directly, edit the default values below
 get_arg <- function(name, default) {
   pattern <- paste0("^--", name, "=")
   hit <- args[grepl(pattern, args)]
@@ -58,7 +59,7 @@ low_income_cutoff <- get_arg("low_income_cutoff", "p25") # low-income cutoff for
 outcome_model <- get_arg("outcome_model", "levels") # levels or Poisson
 profile_scope <- get_arg("profile_scope", "all") # all profiles or Profile 4 only
 age_filter_arg <- get_arg("age_filter", "3")     # age groups to keep
-wind_control <- get_arg("wind_control", "none")  # annual wind controls
+wind_control <- get_arg("wind_control", "both")  # annual wind controls
 daily_overlap_control <- get_arg("daily_overlap_control", "none")     # rain-wind overlap controls
 daily_overlap_exclusion <- get_arg("daily_overlap_exclusion", "none") # drop rain-wind overlap years
 

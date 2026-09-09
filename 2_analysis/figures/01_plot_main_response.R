@@ -53,7 +53,7 @@ response <- get_arg("response", "both")              # rainfall, temperature, or
 spec_set <- get_arg("spec_set", "main_two")          # main specs or four-spec comparison
 weighted_arg <- tolower(get_arg("weighted", "true")) # use population weights
 prcp_order <- as.integer(get_arg("prcp_order", "3")) # rainfall polynomial order
-wind_control <- get_arg("wind_control", "none")      # annual wind controls
+wind_control <- get_arg("wind_control", "both")      # annual wind controls
 daily_overlap_control <- get_arg("daily_overlap_control", "none")     # rain-wind overlap controls
 daily_overlap_exclusion <- get_arg("daily_overlap_exclusion", "none") # drop rain-wind overlap years
 

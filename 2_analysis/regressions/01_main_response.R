@@ -40,21 +40,22 @@ library(fixest)
 
 args <- commandArgs(FALSE)
 
-# Use the value passed by sbatch, or the default if nothing is passed.
+# sbatch passes options like --outcome_model=poisson
+# If running this script directly, edit the default values below
 get_arg <- function(name, default) {
   pattern <- paste0("^--", name, "=")
   hit <- args[grepl(pattern, args)]
   if (length(hit) == 0) default else sub(pattern, "", hit[[1]])
 }
 
-# These options are usually set in the sbatch files.
+# These options are usually set in the sbatch files
 outcome_model <- get_arg("outcome_model", "levels")       # levels or Poisson
 response <- get_arg("response", "both")                   # rainfall, temperature, or both
 spec_set <- get_arg("spec_set", "main_two")               # main specs or four-spec comparison
 climate_product <- get_arg("climate_product", "ERA5LAND") # climate variables to use
 weighted_arg <- tolower(get_arg("weighted", "true"))      # use population weights
 prcp_order <- as.integer(get_arg("prcp_order", "3"))      # rainfall polynomial order
-wind_control <- get_arg("wind_control", "none")           # annual wind controls
+wind_control <- get_arg("wind_control", "both")           # annual wind controls
 daily_overlap_control <- get_arg("daily_overlap_control", "none")     # rain-wind overlap controls
 daily_overlap_exclusion <- get_arg("daily_overlap_exclusion", "none") # drop rain-wind overlap years
 

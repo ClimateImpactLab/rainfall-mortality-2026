@@ -53,7 +53,8 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(FALSE)
 
-# Use the value passed by sbatch, or the default if nothing is passed
+# sbatch passes options like --outcome_model=poisson
+# If running this script directly, edit the default values below
 get_arg <- function(name, default) {
   pattern <- paste0("^--", name, "=")
   hit <- args[grepl(pattern, args)]
