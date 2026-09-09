@@ -42,7 +42,7 @@ get_arg <- function(name, default) {
   if (length(hit) == 0) default else sub(pattern, "", hit[[1]])
 }
 
-# These options are usually set in the sbatch files.
+# These options are usually set in the sbatch files
 outcome_model <- get_arg("outcome_model", "levels")        # levels or Poisson
 make_panels_arg <- tolower(get_arg("make_panels", "true")) # make combined Overleaf panels
 make_panels <- make_panels_arg %in% c("true", "t", "1", "yes") # true/t/1/yes all mean make panels

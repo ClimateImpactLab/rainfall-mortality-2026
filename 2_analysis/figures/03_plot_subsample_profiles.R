@@ -47,12 +47,12 @@ get_arg <- function(name, default) {
   if (length(hit) == 0) default else sub(pattern, "", hit[[1]])
 }
 
-# These options are usually set in the sbatch files.
+# These options are usually set in the sbatch files
 low_income_cutoff <- get_arg("low_income_cutoff", "p25") # low-income cutoff for profiles
 outcome_model <- get_arg("outcome_model", "levels")       # levels or Poisson
 profile_scope <- get_arg("profile_scope", "all")          # all profiles or Profile 4 only
 age_filter_arg <- get_arg("age_filter", "3")              # age groups to plot
-wind_control <- get_arg("wind_control", "none")           # annual wind controls
+wind_control <- get_arg("wind_control", "both")           # annual wind controls
 daily_overlap_control <- get_arg("daily_overlap_control", "none")     # rain-wind overlap controls
 daily_overlap_exclusion <- get_arg("daily_overlap_exclusion", "none") # drop rain-wind overlap years
 
