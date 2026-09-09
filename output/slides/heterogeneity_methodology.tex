@@ -1,0 +1,337 @@
+%============================================================================%
+% Disciplined heterogeneity: residualise-then-LASSO
+%
+% Prototype outputs from adhoc/phl/prototype/lasso_heterogeneity.R
+% Compile:  latexmk -pdf heterogeneity_methodology.tex
+%============================================================================%
+\documentclass[10pt, aspectratio=169]{beamer}
+
+\usetheme{default}
+\usecolortheme{dove}
+\setbeamertemplate{navigation symbols}{}
+\setbeamerfont{title}{series=\bfseries}
+\setbeamerfont{frametitle}{series=\bfseries}
+\setbeamercolor{frametitle}{fg=black}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+\graphicspath{{../figures/phl/}}
+
+\AtBeginSection[]{%
+  \begin{frame}[plain]
+    \vfill\centering{\usebeamerfont{title}\insertsectionhead}\vfill
+  \end{frame}
+}
+
+\title{Disciplined Heterogeneity in the Rainfall--Mortality Response}
+\subtitle{Allowing many margins, then selecting among them}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}[plain]\titlepage\end{frame}
+
+%============================================================================%
+\section{The Problem}
+%============================================================================%
+
+\begin{frame}{Two mechanisms, one model}
+  We want a specification that lets \textbf{both} narratives exist and be
+  estimated on the full sample:
+  \begin{itemize}
+    \item \textbf{Extreme rainfall} damages --- flooding, trauma, waterborne
+          disease. Operates at a \emph{daily} scale, days-to-weeks lags,
+          concentrated where drainage and density make flooding lethal.
+    \item \textbf{Drought} damages --- water scarcity, lost agricultural
+          income, malnutrition. Operates on \emph{accumulated deficits} over
+          months, with lags of 6--18 months, concentrated where water
+          infrastructure is poor and livelihoods are rain-dependent.
+  \end{itemize}
+  \vspace{0.5em}
+  A single smooth $f(\text{daily rainfall})$ \textbf{cannot represent both},
+  because they live at different temporal scales. Worse, several channels are
+  non-monotone in opposite directions (diarrhoeal disease is U-shaped in
+  rainfall; vector-borne disease is hump-shaped), so an all-cause polynomial
+  can average genuine effects toward zero.
+\end{frame}
+
+\begin{frame}{And a search problem we have already been burned by}
+  Testing many candidate margins one at a time does not work. From the PHL
+  analysis:
+  \begin{itemize}
+    \item Five urban-share bins $\times$ three ages gave \textbf{one}
+          significant cell out of fifteen --- against $\approx 0.75$ expected
+          by chance.
+    \item \textbf{Which} cell was significant \emph{moved when the bins were
+          redrawn}: quintiles flagged (88.8--100]; a finer grid flagged
+          (90--95] while (95--100] went quiet; the \emph{least} urban bin
+          cleared for 65+.
+    \item Formal tests of the implied threshold --- top-vs-bottom,
+          top-vs-pooled-rest, and a scan over cutoffs from 60\% to 95\% ---
+          were significant \textbf{nowhere} (smallest $p = 0.11$ across 18
+          tests).
+  \end{itemize}
+  \vspace{0.4em}
+  We need a procedure that can consider many margins \emph{without} inheriting
+  the multiple-comparison problem of having looked at all of them.
+\end{frame}
+
+%============================================================================%
+\section{Specification}
+%============================================================================%
+
+\begin{frame}{A model that nests both mechanisms}
+  \[
+    D_{ait} = \exp\Big(
+      \underbrace{f_a(\mathbf{E}_{it})}_{\text{daily extremes}} +
+      \underbrace{g_a(\mathbf{S}_{it})}_{\text{accumulated deficit}} +
+      \sum_j \big[ f^j_a(\mathbf{E}_{it}) V^{\text{flood}}_{ij}
+                 + g^j_a(\mathbf{S}_{it}) V^{\text{dry}}_{ij} \big]
+      + \mu + \nu \Big)
+  \]
+  \begin{itemize}
+    \item $\mathbf{E}$: daily-scale exposure --- days above local p95/p99,
+          excess rain above threshold, Rx1day / Rx5day.
+    \item $\mathbf{S}$: accumulated deficit --- SPI/SPEI at 6 and 12 months,
+          log-deviation over rolling windows, consecutive dry days.
+    \item \textbf{The two exposures carry different interaction sets.} Forcing
+          one vulnerability dimension to serve both is precisely what stops
+          the current specification from representing both stories.
+  \end{itemize}
+  \vspace{0.3em}
+  {\scriptsize Additive separability in scale is the key restriction. A cross
+  term (drought raising flood vulnerability) is allowed but expected to be
+  second-order.}
+\end{frame}
+
+\begin{frame}{Selection should do less work than it sounds like}
+  The strongest discipline is \textbf{over-identification}, not fit. Each
+  mechanism makes four independent, falsifiable predictions:
+  \begin{center}
+    \small
+    \begin{tabular}{lll}
+      \toprule
+       & Flood mechanism & Drought mechanism \\
+      \midrule
+      Functional shape & wet tail, daily intensity & accumulated deficit \\
+      Timescale        & days--weeks               & 6--18 months \\
+      Cause of death   & drowning, injury, leptospirosis & intestinal, malnutrition \\
+      Vulnerability    & drainage, density, poverty & water infra., aridity, poverty \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+  \vspace{0.5em}
+  A model that \emph{fits} best is weak evidence. A mechanism that correctly
+  predicts \textbf{shape, lag, cause and heterogeneity simultaneously} is
+  strong evidence, because there are far more testable implications than free
+  parameters. Let theory restrict the space; use ML to choose within it.
+\end{frame}
+
+%============================================================================%
+\section{Method}
+%============================================================================%
+
+\begin{frame}{Residualise, then LASSO}
+  \begin{enumerate}
+    \item \textbf{Build wide.} Every exposure term $\times$ age $\times$ every
+          candidate vulnerability variable, in \emph{levels and squares} so
+          non-monotone heterogeneity is expressible.
+    \item \textbf{Partial out the fixed effects} by Frisch--Waugh
+          (\texttt{fixest::demean}). The LASSO never sees the $>$18,000 fixed
+          effects; they are absorbed exactly.
+    \item \textbf{LASSO the interactions, never the core.}
+          \texttt{penalty.factor = 0} on $f_a$ and $g_a$: the objects of
+          interest are always in and never shrunk. Only the heterogeneity
+          space is penalised.
+    \item \textbf{Choose $\lambda$ by cluster-blocked CV} --- folds are whole
+          provinces.
+    \item \textbf{Estimate} the selected model by \texttt{fepois}, and assess
+          stability by bootstrap.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Three details that decide whether this works}
+  \begin{itemize}
+    \item \textbf{Cluster-blocked folds are not optional.} i.i.d.\ CV lets the
+          same municipality inform training and validation; under spatial and
+          serial correlation it systematically \emph{underpenalises} and will
+          select noise. Folds must be whole provinces (or the theory-driven
+          plug-in $\lambda$ of Belloni et al.).
+    \item \textbf{Correlated terms are selected arbitrarily.} Post-FE, the
+          linear and quadratic precipitation terms correlate at $0.79$. LASSO
+          keeps one essentially at random and swaps between folds. Use
+          \emph{group} LASSO so a polynomial block enters or exits together,
+          or keep functional form out of the selection entirely.
+    \item \textbf{Naive post-LASSO inference is invalid.} Reporting selected
+          coefficients with ordinary standard errors gives shrunk estimates
+          and $p$-values that ignore the search. Valid options: post-double
+          selection (Belloni--Chernozhukov--Hansen), cross-fitted double ML,
+          or --- as here --- report \emph{selection frequencies} rather than
+          $p$-values.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Discovery and confirmation on different data}
+  Regularisation controls overfitting \emph{within} a sample. It does not
+  protect against the risk that a margin is specific to one country.
+  \begin{center}
+    \small
+    \begin{tabular}{lll}
+      \toprule
+      Split & Share & Use \\
+      \midrule
+      Develop & $\sim$40\% & find candidate margins freely; nothing reportable \\
+      Tune    & $\sim$20\% & choose $\lambda$, bin edges, lag lengths \\
+      Confirm & $\sim$40\% & estimate once; \textbf{these} are the reported numbers \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+  \vspace{0.5em}
+  \textbf{Split by geography, not at random.} Random splitting leaks: the same
+  municipality appears in both halves and spatial correlation carries
+  information across. With a multi-country panel, develop on one country and
+  confirm on the others --- out-of-sample in the sense that matters for the
+  claim we want to make.
+\end{frame}
+
+%============================================================================%
+\section{Prototype: Philippines}
+%============================================================================%
+
+\begin{frame}{The prototype design}
+  Run on the PHL panel to stress-test the machinery before the multi-country
+  data arrives (\texttt{05\_lasso\_heterogeneity.R}).
+  \begin{itemize}
+    \item \textbf{82,593} municipality $\times$ year $\times$ age observations.
+    \item \textbf{7 vulnerability variables}: urban share, coastal share,
+          log income, long-run precipitation, long-run temperature, log
+          population, settlement class --- each in levels and squares.
+    \item \textbf{144 design columns}: 18 core exposure terms (unpenalised)
+          $+$ \textbf{126 penalised interactions}.
+    \item Fixed effects absorbed by Frisch--Waugh: \textbf{13,041} municipality
+          $\times$ age $\times$ era and \textbf{5,187} province $\times$ year
+          $\times$ age.
+    \item $\lambda$ chosen by 10-fold CV with \textbf{provinces as folds}.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Result: the conservative rule selects nothing}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{lasso_cv.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \vspace{1em}
+      \begin{itemize}
+        \item $\lambda_{\text{1se}} = 18.1$ selects \textbf{0 of 126}
+              interactions.
+        \item $\lambda_{\min} = 0.143$ selects \textbf{49}.
+        \item The two differ by \textbf{two orders of magnitude} --- the CV
+              curve is very flat, which is what a weak heterogeneity signal
+              looks like.
+      \end{itemize}
+      \vspace{0.5em}
+      Under the standard conservative rule, \textbf{no heterogeneity in the
+      PHL rainfall response survives province-blocked cross-validation}. That
+      is consistent with everything the bin-by-bin analysis found, and it is
+      the honest headline.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Which margins survive at the permissive penalty}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{lasso_stability.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.43\textwidth}
+      \vspace{0.8em}
+      Selection frequency over \textbf{40 province-block bootstraps} at
+      $\lambda_{\min}$. \textbf{22 of 114} terms are selected in $\ge 90\%$ of
+      resamples.
+      \vspace{0.5em}
+
+      Ordering by dimension: \textbf{population} and \textbf{urban share}
+      first (both at 100\%), then coastal, income, long-run precipitation.
+      \vspace{0.5em}
+
+      {\scriptsize \textbf{Read with care.} These frequencies are conditional
+      on $\lambda_{\min}$, a deliberately permissive penalty chosen because
+      the 1-s.e.\ rule kept nothing. High stability here means ``robustly
+      selected \emph{given} a generous penalty'', not ``significant''.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{What the prototype actually teaches}
+  \begin{itemize}
+    \item \textbf{The machinery works} and scales: 126 interactions and 18,000
+          fixed effects handled in one pass, minutes of compute.
+    \item \textbf{Population size emerges as a margin we had not tested.} It
+          was in no bin-by-bin analysis, and it is selected in every bootstrap.
+          It is also correlated with urban share --- so part of what we read as
+          an ``urban'' effect may be a \emph{population-size} effect, which has
+          different mechanisms (health-system capacity, registration quality,
+          small-count noise).
+    \item \textbf{The PHL null is now much better established.} Not ``we tried
+          some bins and found little'', but ``a penalised search over 126
+          candidate margins, disciplined by spatially blocked CV, retains
+          nothing under the conservative rule''.
+    \item That is a far stronger prior to carry into the multi-country panel,
+          where the same procedure has real variation to work with.
+  \end{itemize}
+\end{frame}
+
+%============================================================================%
+\section{Caveats and Next Steps}
+%============================================================================%
+
+\begin{frame}{What is approximate here}
+  \begin{itemize}
+    \item \textbf{FWL is exact for linear models; our estimator is Poisson.}
+          Selection currently happens in the linear analogue and estimation in
+          the Poisson model. Defensible --- selection need not use the
+          estimation likelihood --- but not exact. The clean fix is
+          demeaning inside the IRLS loop, or a Poisson LASSO with offsets.
+    \item \textbf{Bootstrap stability is not inference.} It answers ``how
+          reliably is this term selected'', not ``is this coefficient
+          non-zero''. Valid inference needs post-double-selection or
+          cross-fitting, which is the next build.
+    \item \textbf{Correlated polynomial terms should be grouped.} Currently
+          selected individually; group LASSO is the correct object.
+    \item \textbf{The heterogeneity space is still small.} Seven variables,
+          one exposure scale. The design only becomes interesting once daily
+          extremes and accumulated deficits are both present.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Next steps}
+  \begin{enumerate}
+    \item \textbf{Daily and monthly climate} from the cluster --- without both
+          exposure scales the two-mechanism model cannot be written down.
+    \item \textbf{Cause of death}, which is what separates cancelling
+          mechanisms and gives each its own functional form.
+    \item \textbf{Water and sanitation coverage}, the vulnerability margin the
+          drought literature says governs the deficit channel.
+    \item \textbf{Group LASSO plus cross-fitting}, for valid inference on the
+          selected margins.
+    \item \textbf{Add Brazil and Mexico}, and adopt the develop/confirm split
+          across countries --- develop the specification in one, confirm in
+          the others.
+  \end{enumerate}
+  \vspace{0.4em}
+  {\scriptsize Step 5 is what turns this from a selection procedure into
+  evidence: a margin that is discovered in one country and confirmed in
+  another is a different kind of claim from one that survives a penalty in
+  the sample where it was found.}
+\end{frame}
+
+\end{document}

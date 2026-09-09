@@ -27,3 +27,38 @@ logs/
 # -----------------------
 temp/
 checks/
+
+# -----------------------
+# LaTeX build artefacts
+# -----------------------
+output/slides/*.aux
+output/slides/*.fls
+output/slides/*.fdb_latexmk
+output/slides/*.nav
+output/slides/*.snm
+output/slides/*.toc
+
+# -----------------------
+# Local copies of input data
+# A mirror of files that live on the cluster, for working off-server. Nothing
+# in here is version controlled; adhoc/README.md documents what goes where.
+# -----------------------
+local_data/
+
+# -----------------------
+# Everything the adhoc studies generate
+# Figures, tables, response curves and intermediate data under these study
+# folders are all produced by the scripts in adhoc/ and are rebuilt by re-running
+# a study, so none of it is version controlled. The compiled deck PDFs in
+# output/slides/ are the committed rendering.
+#
+# Still tracked, deliberately: output/slides/*.tex are hand-written deck sources,
+# and output/data/rf/ + output/data/carleton2022_precip/ come from the main
+# pipeline (adhoc/phl/01 reads rf.main.spec.csv for the global overlay).
+# -----------------------
+output/data/phl/
+output/data/wind_tc_validation/
+output/figures/phl/
+output/figures/wind_tc_validation/
+output/tables/phl/
+output/tables/wind_tc_validation/

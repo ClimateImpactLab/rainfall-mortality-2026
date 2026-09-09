@@ -1,0 +1,401 @@
+%============================================================================%
+% Young-Hsiang TC mortality regressions with ERA5-Land wind
+%
+% Figures/tables are produced by
+%   adhoc/wind_tc_validation/02_young_hsiang_regressions_era5.R
+% Compile from this directory:  latexmk -pdf wind_tc_validation.tex
+%============================================================================%
+\documentclass[10pt, aspectratio=169]{beamer}
+
+\usetheme{default}
+\usecolortheme{dove}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{caption}{\insertcaption}
+\setbeamerfont{title}{series=\bfseries}
+\setbeamerfont{frametitle}{series=\bfseries}
+\setbeamercolor{frametitle}{fg=black}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+
+\graphicspath{{../figures/wind_tc_validation/}}
+
+% \yhCumRef, \corrTC, ... written by the R script
+\input{../tables/wind_tc_validation/facts.tex}
+\input{../tables/wind_tc_validation/diag_facts.tex}
+\input{../tables/wind_tc_validation/sweep_facts.tex}
+
+\AtBeginSection[]{%
+  \begin{frame}[plain]
+    \vfill
+    \centering
+    {\usebeamerfont{title}\insertsectionhead}
+    \vfill
+  \end{frame}
+}
+
+\title{Can ERA5-Land Wind Stand In for LICRICE TC Wind?}
+\subtitle{Replicating Young \& Hsiang, and swapping the exposure measure}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \titlepage
+\end{frame}
+
+\begin{frame}{Roadmap}
+  \begin{enumerate}
+    \item \textbf{Setup} --- the panel, and the specification we are matching.
+    \item \textbf{Replication} --- does the Young--Hsiang headline reproduce? \emph{Yes.}
+    \item \textbf{Comparing the two wind measures} --- descriptive comparison of \texttt{maxs} and ERA5-Land wind.
+    \item \textbf{Results}
+    \item \textbf{Why the ERA5 coefficients are larger} --- diagnostics: scaling, masking, season and state placebos, and leave-one-out.
+  \end{enumerate}
+  \vfill
+  \footnotesize
+  \textbf{Summary.} 
+  The replication reproduces the published estimate. ERA5-Land wind is associated with mortality in the cyclone season, but does not measure the same events set as \texttt{maxs}.
+\end{frame}
+
+%============================================================================%
+\section{Setup}
+%============================================================================%
+
+\begin{frame}{Purpose}
+  \begin{enumerate}
+    \item \textbf{Replicate} the Young--Hsiang (2024) main result: a 20-year
+          distributed lag of tropical-cyclone wind on all-cause monthly
+          mortality.
+    \item \textbf{Swap} their LICRICE wind measure (\texttt{maxs}) for the
+          ERA5-Land wind we merged onto the same panel, and run the two
+          against each other.
+  \end{enumerate}
+  \vfill
+  \textbf{Panel.} U.S. state $\times$ month, \yhStates{} states,
+  \yhYearLo--\yhYearHi{} in estimation (lags reach back to 1930).
+  Outcome is all-cause deaths per 100,000 per month.
+  \vfill
+  \footnotesize
+  Panel built by the merge documented in
+  \texttt{2\_analysis/wind\_tc\_validation/README.md}; original code at
+  \texttt{Global-Policy-Lab/young\_hsiang\_tc\_mortality}.
+\end{frame}
+
+\begin{frame}{The specification}
+  Young and Hsiang estimate, for state $s$ in month-of-sample $\tau$,
+  \begin{align*}
+    y_{s\tau} \;=\;& \sum_{j=0}^{240} \beta_j \, W_{s,\tau-j}
+      \;+\; \underbrace{\mu_{sm}}_{\substack{\text{state}\,\times\\\text{cal.\ month}}}
+      \;+\; \underbrace{\delta_\tau}_{\substack{\text{month-of-}\\\text{sample}}} \\[0.6em]
+      &+\; \underbrace{f_s(\tau)}_{\substack{\text{state 8th-order}\\\text{polynomial in }\tau}}
+      \;+\; \underbrace{g_s(T_{s\tau})}_{\substack{\text{state quadratic}\\\text{in temperature}}}
+      \;+\; \varepsilon_{s\tau}
+  \end{align*}
+  plus a state-by-calendar-month linear trend. The object of interest is the
+  \textbf{cumulative} effect $B(h) = \sum_{j=0}^{h}\beta_j$; they report it at
+  $h = \yhLagRef$ months.
+  \vfill
+  \footnotesize
+  Their \texttt{areg} uses iid standard errors, so we match that (caveats on the
+  replication slide). We estimate in \texttt{fixest}, absorbing the same column space
+  (241 wind lags, $\approx$2{,}000 absorbed parameters, \yhNobs{} observations).
+\end{frame}
+
+%============================================================================%
+\section{Replication}
+%============================================================================%
+
+\begin{frame}{Replication: the Young--Hsiang main result}
+  \centering
+  \includegraphics[width=0.72\linewidth]{replication_main.png}
+\end{frame}
+
+\begin{frame}{Replication: caveats}
+\begin{itemize}
+  \item \texttt{tavg} is missing for 2013--2015, so the temperature control truncates estimation at \yhYearHi. This is a property of Young and Hsiang's own data: their published \texttt{.dta} has the same gap, so their regressions truncate at \yhYearHi{} too.
+  \item With 36 states and 241 lag coefficients the state-clustered VCOV is rank-deficient (cluster rank $\le 36$), so clustered SEs are not reported here --- Young and Hsiang use randomization inference rather than a cluster correction. We have not reproduced that step. \textbf{We use `iid' SEs here.}
+\end{itemize}
+\end{frame}
+
+%============================================================================%
+\section{Comparing the two wind measures}
+%============================================================================%
+
+\begin{frame}{ERA5-Land against \texttt{maxs}, state-month by state-month}
+  \centering
+  \includegraphics[width=0.92\linewidth]{scatter_maxs_era5.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  Black dots in (b) are binned means. The fitted slope is \olsSlope: a 1 m/s
+  increase in TC wind shows up as about \olsSlope{} m/s of ERA5-Land wind. In
+  (a), the spike of points on the vertical axis is the \maxsShrZero\% of
+  state-months with no tropical cyclone --- ERA5-Land wind there ranges over
+  essentially its whole support.
+\end{frame}
+
+\begin{frame}{The same two series through time}
+  \centering
+  \includegraphics[height=0.84\textheight]{timeseries.png}
+\end{frame}
+
+\begin{frame}{How the two measures differ}
+  \begin{itemize}
+    \item \textbf{Attribution.} \texttt{maxs} is LICRICE wind modelled from
+          cyclone tracks, and is zero in \maxsShrZero\% of state-months.
+          ERA5-Land is the monthly maximum of daily maximum reanalysis wind,
+          whatever the cause; its minimum is \eraMin{} m/s, mean \eraMean.
+    \item \textbf{Scale.} Regressing ERA5-Land on \texttt{maxs} within TC months
+          gives a slope of \olsSlope.
+    \item \textbf{Seasonality.} By monthly mean, raw ERA5-Land peaks in
+          \peakRawMean{} and \texttt{maxs} in September. Across all state-months
+          $r = \corrAll$; within TC months $r = \corrTC$.
+    \item \textbf{Composition.} Of the 50 highest ERA5-Land wind months,
+          \topEraTC{} are TC months. The remainder are mostly winter months in
+          Nebraska and Iowa, states with almost no tropical cyclones.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Seasonality, and separation of TC months}
+  \centering
+  \includegraphics[height=0.52\textheight]{diagnostics.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  \textbf{Top.} \texttt{maxs} and the exceedance measure peak in cyclone season on
+  every statistic; raw ERA5-Land does not --- its 99th percentile peaks in
+  \peakRawPtile{} and its mean in \peakRawMean, both lowest in July--August. Its
+  single \emph{maximum} does fall in \peakRawMax, but that is one observation
+  (Rhode Island, 1954) on a month whose 99th percentile is the second lowest of
+  the year: \topHundredAug{} of the 100 windiest state-months are in August, and
+  \topHundredSeason{} of 100 in June--November against 50 if timing were flat.
+  \textbf{Bottom.} Within TC states the densities largely overlap (\tcMonthMean{}
+  vs \nonTcMonthMean{} m/s), so the raw level does not separate TC months.
+\end{frame}
+
+%============================================================================%
+\section{Swapping in ERA5-Land}
+%============================================================================%
+
+\begin{frame}{The three ERA5-Land wind measures}
+  All are state-month, in m/s. $w_{s\tau}$ is the ERA5-Land monthly maximum of
+  daily maximum wind, averaged over state $s$.
+  \begin{enumerate}
+    \item \textbf{Area-weighted} $w_{s\tau}$ --- the variable as delivered by the
+          merge, grid cells averaged by area.
+    \item \textbf{Population-weighted} --- same, averaged by LandScan population
+          instead. Reported as a robustness; it behaves like (1) throughout.
+    \item \textbf{Exceedance}, written \texttt{w\_exc}:
+      \[
+        w^{\text{exc}}_{s\tau} \;=\; \max\!\left(0,\;\; w_{s\tau} - q^{95}_{s,m(\tau)}\right)
+      \]
+      where $q^{95}_{s,m}$ is the 95th percentile of ERA5-Land wind in state $s$
+      and \emph{calendar month} $m$, over \eraYearMin--\yhYearHi.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Sample restrictions}
+  ERA5-Land wind starts in \eraYearMin. A 240-lag model needs 20 years of wind
+  history before the first usable outcome, so the ERA5 regression begins in
+  \eraSampleLo, 20 years later than the replication.
+  \vfill
+  Run different samples: 
+  \begin{enumerate}
+    \item \textbf{\texttt{maxs}, full sample.} The replication from the previous
+          section, estimated \yhYearLo--\yhYearHi.
+    \item \textbf{\texttt{maxs}, ERA5-feasible sample.} The \emph{same variable
+          and the same specification}, re-estimated only on
+          \eraSampleLo--\yhYearHi. Nothing about the measurement changes --- only
+          the sample length. This is the control.
+    \item \textbf{ERA5-Land area-weighted wind}, on that same
+          \eraSampleLo--\yhYearHi{} sample. This is the actual swap.
+  \end{enumerate}
+
+\end{frame}
+
+
+\begin{frame}{1-year window}
+  \yearSampleLo--\yhYearHi, \yearNobs{}
+  obs
+  \vfill
+  \centering
+  \includegraphics[width=\linewidth]{head_to_head_12.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  All series are signed at 12 months ($t$ = \yrMaxsT, \yrEraRawT, \yrExcT;
+  masked, \yrRawMaskT{} and \yrExcMaskT). Masked to cyclone months, raw ERA5
+  falls from \yrRawSD{} to \yrRawMaskSD, below \texttt{maxs} (\yrMaxsSD), while
+  exceedance changes little (\yrExcSD{} $\to$ \yrExcMaskSD). Masked series use
+  their \emph{parent's} SD.
+\end{frame}
+
+\begin{frame}{5-year window}
+  \shortSampleLo--\yhYearHi{} for every measure.
+  \vfill
+  \centering
+  \includegraphics[width=\linewidth]{head_to_head.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  The masked series remain signed at this horizon ($t = \shortRawMaskT$ raw,
+  $t = \shortExcMaskT$ exceedance).
+\end{frame}
+
+\begin{frame}{Cumulative effect by lag window: first \sweepShortMax{} lags}
+  L = \sweepShortStep, 2$\times$\sweepShortStep, \dots, \sweepShortMax, on the
+  identical samples, in SD units on a common vertical scale. Bars are 95\%
+  intervals.
+  \vfill
+  \centering
+  \includegraphics[width=0.55\linewidth]{lag_sweep_short.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  On its natural sample \texttt{maxs} is near zero to about 50 lags, then rises
+  to \sweepShortAhundred{} at \sweepShortMax{} ($t = \sweepShortAhundredT$). On
+  the fixed \eraSampleLo{} sample the ERA5 series reach \sweepShortBraw{} (raw)
+  and \sweepShortBexc{} (exceedance), with intervals widening in $L$.
+\end{frame}
+
+\begin{frame}{Cumulative effect by lag window}
+L = \sweepStep, 2$\times$\sweepStep, \dots, 240 lags. 
+  \vfill
+  \centering
+  \includegraphics[width=0.80\linewidth]{lag_sweep.png}
+\end{frame}
+
+\begin{frame}{All lags included}
+  \centering
+  \includegraphics[width=0.60\linewidth]{sensitivity_240lags.png}
+  \vfill
+  \raggedright
+  \small
+  \textbf{(1) vs (2).} Same variable and specification, shorter sample: the
+  cumulative effect moves from \yhCumEnd{} to \sensMaxsEnd, a factor of five with
+  no change in measurement.
+  \vspace{0.4em}
+
+  \textbf{(2) vs (3).} Identical sample (\eraSampleLo--\yhYearHi, \sensNobs{}
+  observations) and identical specification; only the wind variable differs.
+\end{frame}
+
+\begin{frame}{Horse race: both measures entered jointly}
+  \centering
+  \includegraphics[width=0.78\linewidth]{horse_race.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  Entered jointly, the ERA5 exceedance measure remains signed ($t = \raceExcT$)
+  while \texttt{maxs} attenuates ($t = \raceMaxsT$).
+\end{frame}
+
+%============================================================================%
+\section{Why the ERA5 coefficients are larger}
+%============================================================================%
+
+\begin{frame}{Four candidate explanations}
+
+  \begin{enumerate}
+    \item \textbf{Scaling.} ``Per SD'' may not be equivalent for a sparse and
+          an always-on series.
+    \item \textbf{Non-cyclone weather.} ERA5-Land may capture other damaging
+          weather associated with mortality.
+    \item \textbf{Season or climate.} The association may be seasonal rather
+          than storm-specific.
+    \item \textbf{Influential units.} A few states or years may drive it.
+  \end{enumerate}
+  \vfill
+  Everything that follows is on the \diagLags-month window, \diagNobs{}
+  observations, produced by
+  \texttt{03\_era5\_diagnostics.R}.
+\end{frame}
+
+\begin{frame}{(1) Scaling}
+  What ``one standard deviation'' means for each measure:
+  \vfill
+  \centering
+  \small
+  \input{../tables/wind_tc_validation/diag_scaling.tex}
+  \vfill
+  \raggedright
+  \footnotesize
+  The last column is the size of a 1-SD move relative to a typical event in that variable. \\
+  It is of similar magnitude for \texttt{maxs} and the exceedance measure, so the per-SD comparison is not the source of the ordering. \\
+  Raw ERA5 wind is the outlier on sparsity: it is positive in every state-month, so its SD describes routine variation rather than events.
+\end{frame}
+
+\begin{frame}{(2)--(3) Where the ERA5 signal sits}
+  \centering
+  \includegraphics[width=0.72\linewidth]{diag_decomposition.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  Each split is entered jointly, so the pair partitions the parent variable.
+  Units are one SD \emph{of the parent measure}. \texttt{maxs} (green) is absent
+  from the first block because it defines that split (its non-TC half is
+  identically zero), and from the no-TC states, which hold 9 TC months between
+  them. Its Dec--May arm rests on 76 events, hence the wide interval.
+\end{frame}
+
+\begin{frame}{Diagnostic results}
+  \centering
+  \tiny
+  \input{../tables/wind_tc_validation/diag_results.tex}
+  \vfill
+  \raggedright
+  \footnotesize
+  Cumulative effect at \diagLags{} months, deaths per 100,000 per m/s.
+  Each ``split'' block enters both components in one regression, so they
+  partition the parent variable.
+\end{frame}
+
+\begin{frame}{Richer climate controls}
+  The baseline already carries Young and Hsiang's temperature control --- a
+  state-specific quadratic in \emph{contemporaneous} monthly mean temperature.
+  \vfill
+  \centering
+  \includegraphics[width=0.62\linewidth]{diag_controls.png}
+  \vfill
+  \raggedright
+\end{frame}
+
+\begin{frame}{On controlling for rainfall}
+  We cannot, with this panel. Its only climate fields are \texttt{tavg} and the
+  ERA5-Land wind columns --- there is no precipitation variable in it. Could be added. 
+\end{frame}
+
+\begin{frame}{(4) Leave one state out, leave one year out}
+  \centering
+  \includegraphics[width=0.86\linewidth]{diag_jackknife.png}
+  \vfill
+  \raggedright
+  \footnotesize
+  \texttt{maxs} is the fragile one: dropping a single unit moves it by up to
+  \jkMaxsRange\%, and its $t$ falls to \jkMaxsMinT{} (dropping
+  \maxsWorstYear; \maxsWorstState{} is the most influential state). The
+  exceedance measure moves at most \jkExcRange\% and never drops below
+  $t = \jkExcMinT$.
+\end{frame}
+
+\begin{frame}{Summary of the diagnostics}
+  \begin{enumerate}
+    \item The ERA5 result survives every placebo.
+    \item \textbf{But it is not measuring the same event set as \texttt{maxs}.}
+          Roughly half of it sits in June--November months that Young and Hsiang
+          code as having \emph{no} tropical cyclone. Candidates: storms below
+          their attribution threshold, near-misses whose wind field still
+          reaches the state, and other severe convective weather in the same
+          season.
+    \item \textbf{\texttt{maxs} is a narrower, noisier instrument.} It is zero in
+          \maxsShrZero\% of months, so it is identified off relatively few
+          events --- hence the jackknife fragility. ERA5-Land uses more of the panel.
+  \end{enumerate}
+\end{frame}
+
+
+\end{document}

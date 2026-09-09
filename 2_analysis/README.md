@@ -22,6 +22,16 @@ regressions/00_prep_analysis_panel.R
   `load_new_panel()` and `filter_regression_sample()`
 ```
 
+## Related: ad-hoc studies
+
+Two self-contained side studies live outside this folder, in
+[`adhoc/`](../adhoc/README.md): the Philippines municipality-level response
+functions (`adhoc/phl/`) and the Young-Hsiang ERA5-Land wind validation
+(`adhoc/wind_tc_validation/`). They are organised by question rather than by
+stage — each script runs its own regressions, figures and tables end to end —
+and each backs a deck in `output/slides/`, so they do not fit the
+regressions/figures/diagnostics split used here.
+
 ## Folder layout
 
 ```text

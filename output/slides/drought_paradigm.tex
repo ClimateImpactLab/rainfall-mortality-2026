@@ -1,0 +1,277 @@
+\documentclass[10pt, aspectratio=169]{beamer}
+
+\usetheme{default}
+\usecolortheme{dove}
+\setbeamertemplate{navigation symbols}{}
+\setbeamerfont{title}{series=\bfseries}
+\setbeamerfont{frametitle}{series=\bfseries}
+\setbeamercolor{frametitle}{fg=black}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, urlcolor=blue!50!black, linkcolor=black}
+
+\newcommand{\paperlink}[2]{\href{#1}{\textcolor{blue!50!black}{\footnotesize [#2]}}}
+
+\AtBeginSection[]{%
+  \begin{frame}[plain]
+    \vfill\centering{\usebeamerfont{title}\insertsectionhead}\vfill
+  \end{frame}
+}
+
+\title{Global impact of rainfall on mortality: drought channel}
+\author{Marine and Tom}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}[plain]\titlepage\end{frame}
+
+
+\begin{frame}{Purpose}
+  \textbf{Goal:} estimate the impact of rainfall on mortality, globally.
+  \vspace{1em}
+  \begin{itemize}
+    \item \textbf{Challenge:} the impacts of rainfall on mortality are highly heterogeneous.
+    \item Droughts kill --- but so does extreme rainfall. 
+    \item Different functions of rainfall impact mortality through different mechanisms, at different temporal scales, in different places.
+  \end{itemize}
+  \vspace{1em}
+  A single pooled response function may average effects toward zero.
+\end{frame}
+
+\begin{frame}{Plan}
+  \vfill
+  \begin{columns}[c]
+    \begin{column}{0.12\textwidth}
+      \centering{\fontsize{10}{10}\selectfont\color{black!50}\bfseries Step 1}
+    \end{column}
+    \begin{column}{0.8\textwidth}
+      {\large\textbf{Paradigms}}\\[0.4em]
+      Build a series of mechanism-specific paradigms, informed by the literature, showing empirically how different mechanisms operate in different parts of the sample.
+    \end{column}
+  \end{columns}
+  \vspace{1.2em}
+  {\color{black!20}\hrule}
+  \vspace{1.2em}
+  \begin{columns}[c]
+    \begin{column}{0.12\textwidth}
+      \centering{\fontsize{10}{10}\selectfont\color{black!50}\bfseries Step 2}
+    \end{column}
+    \begin{column}{0.8\textwidth}
+      {\large\textbf{Model selection}}\\[0.4em]
+      Use machine learning to allow for rich heterogeneity everywhere, informed by the paradigms from Stage 1.
+    \end{column}
+  \end{columns}
+  \vfill
+\end{frame}
+
+\begin{frame}{Current status: paradigm 1 --- extreme rainfall in cities}
+  \begin{itemize}
+    \item Bearpark et al.\ (2025, \emph{Nature}): extreme daily rainfall causes large mortality impacts in Mumbai.
+    \item Suggestive evidence of the same pattern in our sample, when restricting to admin units that resemble Mumbai (dense, urban, flood-exposed).
+  \end{itemize}
+  \vspace{2em}
+  Paradigm 1: Cities may carry large negative effects of \emph{extreme daily} rainfall.
+\end{frame}
+
+\begin{frame}{Paradigm 2: drought}
+  \vfill
+  \centering
+  {\Large How should we measure drought,\\[0.3em]
+  and where should it matter for mortality?}
+  \vfill
+\end{frame}
+
+%============================================================================%
+\section{Literature}
+%============================================================================%
+
+\begin{frame}{The Economics of Drought}
+    
+  \textbf{Core insight: the rainfall deficit is only the beginning of the story.}
+  Whether it becomes an actual shortage depends on storage, groundwater,
+  irrigation, conveyance, prices, allocation rules, markets, \ldots
+  \vspace{0.6em}
+  \begin{itemize}
+    \item \textbf{drought} $\neq$ \textbf{water scarcity} $\neq$ \textbf{water shortage}.
+    \begin{itemize}
+      \item A drought can raise scarcity without creating a shortage that households or farms experience.
+      \item Conversely: high demand or poor allocation can create a shortage with no exceptional meteorological drought.
+    \end{itemize}
+  \end{itemize}
+  \vspace{1em}
+  A useful frame for choosing heterogeneity dimensions and mechanisms.
+
+  \vfill
+  \paperlink{https://doi.org/10.1146/annurev-resource-101623-100253}{Edwards, Sanchez \& Sekhri 2024}\\
+\end{frame}
+
+\begin{frame}{Water Scarcity and Birth Outcomes in the Brazilian Semiarid}
+  Rainfall deficits during pregnancy worsen birth outcomes and raise infant mortality in poor semiarid places, mainly through intestinal infections and malnutrition.
+  \vspace{0.6em}
+  \begin{itemize}
+    \item \textbf{Key heterogeneity:} mortality effects are larger where piped-water and sanitation coverage are low (and for youngest age group). 
+    \item Measures rainfall during 
+    \item Null impacts for agriculture
+  \end{itemize}
+
+  \vfill
+    \paperlink{https://doi.org/10.1016/j.jdeveco.2014.10.003}{Rocha \& Soares 2015}
+\end{frame}
+
+\begin{frame}{Global WASH mapping }
+  \textbf{A data source for heterogeneity:} annual 5\,km estimates of water-source
+  and sanitation categories, 90 LMICs, 2000--2017.
+  \vspace{0.6em}
+  \begin{itemize}
+    \item Rasters plus adm1/adm2 summaries; the rasters let us aggregate to
+          \emph{our own} admin boundaries.
+    \item Four categories each for water source and sanitation.
+          Initially keep them \textbf{separate} rather than collapsing into a
+          single WASH index --- they may capture different dimensions of
+          vulnerability.
+  \end{itemize}
+  \vspace{0.6em}
+  \textbf{Open question:} let these measures vary through time, or take a fixed
+  baseline / sample average?
+
+  \vfill 
+    \paperlink{https://doi.org/10.1016/S2214-109X(20)30278-3}{Local Burden of Disease WASH Collaborators 2020}
+\end{frame}
+
+\begin{frame}{Drought and mortality in urban Brazil}
+  Weekly mortality in 13 large Brazilian urban areas, linked to SPEI-1.
+  \vspace{0.6em}
+  \begin{itemize}
+    \item Pooled effects small and imprecise --- but stronger signals for
+          respiratory and circulatory mortality, and among women, children and
+          older adults.
+    \item \textbf{Takeaway:} do not exclude cities from the drought analysis.
+          Short dry periods may affect particular urban populations even when
+          the average city-level relationship is weak.
+    \item Mechanisms not identified; candidates discussed: water-system
+          stress, dust / air pollution, dehydration, heat, socioeconomic
+          vulnerability. A good starting list.
+    \item \textbf{Measurement issue:} they use city-center exposure, but drought
+          may hit a city's \emph{source watershed or reservoir system}. How to
+          measure that? (Proxy from James's hydrology work?)
+  \end{itemize}
+  \vfill
+    \paperlink{https://doi.org/10.1029/2021GH000534}{Salvador et al.\ 2022}
+\end{frame}
+
+%============================================================================%
+\section{Defining and Measuring Drought}
+%============================================================================%
+
+\begin{frame}{What is drought?}
+  \textbf{Working definition:} a rainfall shortage that is \emph{unusual} for a
+  place and time of year, and that \emph{persists} long enough to matter.
+  \vspace{0.6em}
+
+  Three features from the literature
+  \paperlink{https://doi.org/10.1080/02508068508686328}{Wilhite \& Glantz 1985}
+  \paperlink{https://doi.org/10.1029/WR016i002p00297}{Dracup, Lee \& Paulson 1980}
+  \paperlink{https://www.droughtmanagement.info/find/guidelines-tools/handbook-drought-indicators-and-indices/}{WMO/GWP 2016}:
+  \begin{itemize}
+    \item \textbf{Relative:} 20\,mm can be extremely dry in one place/month and
+          completely normal in another. A normal dry season is not drought.
+    \item \textbf{Persistent:} one dry day, week or even month is a rainfall
+          shock; drought is a deficit that continues or accumulates.
+    \item \textbf{Propagates:} precipitation deficit $\rightarrow$ low soil
+          moisture $\rightarrow$ low streamflow / storage $\rightarrow$ crop
+          stress $\rightarrow$ experienced water or food shortage. Related, but
+          \emph{not} the same exposure, nor the same time scale.
+  \end{itemize}
+  \vspace{0.4em}
+  Four categories \paperlink{https://doi.org/10.1080/02508068508686328}{Wilhite \& Glantz 1985}:
+  \textbf{meteorological} $\cdot$ agricultural $\cdot$ hydrological $\cdot$
+  socioeconomic. Our common cross-country exposure is \textbf{meteorological};
+  the others are mechanism-specific measures or consequences (agricultural
+  drought may need a growing-season definition --- to discuss).
+\end{frame}
+
+\begin{frame}{Proposed construction: from admin-month rainfall to episodes}
+  Dimensions worth preserving
+  \paperlink{https://doi.org/10.1029/WR016i002p00297}{Dracup, Lee \& Paulson 1980}:
+  onset $\cdot$ duration $\cdot$ intensity $\cdot$ cumulative severity $\cdot$
+  worst month (``nadir'') $\cdot$ recovery. \emph{Which do we need?}
+  \vspace{0.6em}
+  \begin{enumerate}
+    \item \textbf{Admin-month rainfall.} Sum daily admin-level rainfall to
+          monthly totals (already processed; pop-weighted as default?).
+    \item \textbf{Fixed reference period.} Same across the panel --- but which?
+          Projection-system ``historical climate'' (1981--2001? 1981--2010?).
+          Country-specific baselines would change what the percentile means.
+          Alternative reference periods as sensitivity checks.
+          \emph{Tom: rolling average} --- needs precip data beyond mortality
+          coverage years.
+    \item \textbf{Local rainfall percentile.} Compare each admin-month with the
+          historical distribution for the \emph{same admin, same calendar
+          month} (January vs.\ Januaries). Solves cross-climate comparability;
+          retain totals and mm deficit alongside.
+    \item \textbf{Join months into episodes.} First rule: $\leq$ 20th local
+          percentile for $\geq$ 2 consecutive months (test alternatives).
+          Per episode keep onset, duration, worst percentile, cumulative
+          percentile and mm deficits.
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{Standard indices, and getting to the annual panel}
+  \textbf{Standard indices as complements?}
+  \begin{itemize}
+    \item \textbf{SPI-3 / 6 / 12} from monthly precip
+          \paperlink{https://climate.colostate.edu/pdfs/relationshipofdroughtfrequency.pdf}{McKee et al.\ 1993}
+          \paperlink{https://library.wmo.int/idurl/4/39629}{WMO 2012}:
+          widely used, comparable across climates; less intuitive than direct
+          duration/severity. Windows map to mechanisms: SPI-3 seasonal /
+          agriculture, SPI-12 longer-term water supply.
+          Constructed at adm-unit level (settled).
+    \item \textbf{SPEI} as robustness
+          \paperlink{https://doi.org/10.1175/2009JCLI2909.1}{Vicente-Serrano et al.\ 2010}:
+          adds evapotranspiration --- but then partly combines low precip with
+          temperature.
+  \end{itemize}
+  \vspace{0.6em}
+  \textbf{Monthly episodes $\rightarrow$ annual mortality panel.} Identify
+  episodes in monthly data first, then translate to admin-year measures:
+  \begin{itemize}
+    \item months in qualifying drought during the year; maximum episode duration
+    \item cumulative percentile and/or mm deficit; worst monthly percentile
+    \item minimum SPI-3 / SPI-6 / SPI-12
+  \end{itemize}
+\end{frame}
+
+%============================================================================%
+\section{Next Steps}
+%============================================================================%
+
+\begin{frame}{First mechanism: household water and sanitation}
+  The clearest place to start --- we have a plausible cross-country data source.
+  \vspace{0.6em}
+
+  \textbf{The story:} persistent low rainfall reduces water quantity or
+  reliability $\rightarrow$ households store water or switch sources
+  $\rightarrow$ hygiene and sanitation worsen $\rightarrow$ infection,
+  dehydration, nutrition risks rise. Expect the strongest effects where
+  piped-water and sanitation access are low, surface/unimproved water is
+  common, and among infants and young children.
+  \vspace{0.6em}
+
+  \textbf{What we can realistically do:}
+  \begin{itemize}
+    \item Aggregate the LBD WASH estimates to our admin units.
+    \item Build baseline (or time-varying) shares: piped water,
+          surface/unimproved water, sewer/septic, \ldots
+    \item Interact these with drought --- separately at first, not as one index.
+    \item Focus on the youngest age group and enteric/malnutrition causes where
+          available (only a few countries in our sample).
+  \end{itemize}
+\end{frame}
+
+\end{document}

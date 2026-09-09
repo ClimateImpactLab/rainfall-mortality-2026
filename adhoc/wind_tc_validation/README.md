@@ -109,7 +109,7 @@ The check workbook is:
 
 The workbook is created by:
 
-- `2_analysis/wind_tc_validation/01_compare_young_hsiang_era5land_wind.R`
+- `adhoc/wind_tc_validation/01_compare_young_hsiang_era5land_wind.R`
 
 It compares Young and Hsiang's `maxs` variable with our area-weighted ERA5-Land wind variable, `windmax_area_month`.
 
@@ -128,3 +128,63 @@ Main takeaway:
 - This is consistent with ERA5-Land wind being useful as a broad wind check, but maybe not a perfect replacement measure for TC exposure. 
 
 
+
+## Scripts
+
+All four analysis scripts share `_wind_common.R`, which resolves the panel,
+builds the derived wind measures, and defines the estimator `fit_dl()`. Sourcing
+it from one place is what keeps the panel, the variable construction and the
+fixed effects identical across the scripts — the numbers in the deck are only
+comparable to each other because of that.
+
+| Script | What it does |
+|---|---|
+| `01_compare_young_hsiang_era5land_wind.R` | The data check described above: `maxs` versus `windmax_area_month`, coverage and distributions |
+| `02_young_hsiang_regressions_era5.R` | Replicates the Young-Hsiang headline distributed-lag result, then runs `maxs` against the ERA5-Land measures head to head and in a horse race |
+| `03_era5_diagnostics.R` | Why the ERA5 coefficients come out large. Six diagnostics: scaling arithmetic, TC/non-TC decomposition, season decomposition, a no-TC-state placebo, leave-one-state-out and leave-one-year-out |
+| `04_lag_window_sweep.R` | How much the answer depends on the lag window: the model re-estimated at L = 10, 20, ... 240, each point a separate regression |
+
+### `_wind_common.R`
+
+Defines `PANEL_CSV`, the prepared panel `d`, the lag windows
+(`L_MAIN`/`L_SHORT`/`L_YEAR`/`LAG_REF`), `OUTCOME`, `FE`, `MEASURES`,
+`sd_scale_of()`, `cached()`, `fmt()`, `fit_dl()` and `SDS`. It assumes
+`adhoc/_common.R` has been sourced first; the bootstrap at the top of each
+script does that.
+
+Two constructions in it are load-bearing and easy to undo by accident:
+
+- The `*_tc` / `*_notc` masked variants are built by **multiplication**, not
+  `if_else()`. `NA * 0` is `NA`, so a month where the parent measure is missing
+  stays missing in both halves. An `if_else()` version hands back a hard `0` for
+  every pre-1950 row, which defeats the only thing stopping `fit_dl()` from
+  reaching back past the start of the ERA5 record — its rule that an observation
+  is dropped when its longest lag is `NA`. Do not rebuild these columns
+  downstream.
+- Masked measures are rescaled by their **parent's** standard deviation, never
+  their own (`PARENT`, `sd_scale_of()`). A mask changes a variable's SD through
+  the on/off switching rather than through wind — masking raw ERA5 wind actually
+  *raises* the SD, masking the exceedance measure lowers it — so per-own-SD units
+  would not mean anything.
+
+### Estimation sample
+
+`fit_dl()` builds the lags on the full panel and applies `est_filter`
+afterwards, so dropping a unit for a jackknife does not put a gap in the lag
+structure of the units either side of it. The sample is then whatever survives
+the outcome, the temperature control and the longest lag.
+
+### Caching
+
+The jackknives and the lag sweep are several hundred model fits and dominate
+runtime, so `cached()` memoizes each result to `output/data/wind_tc_validation/`
+with a `.key` signature covering the panel's mtime and size, the outcome, the
+fixed effects and the caller's key. Force a recompute with:
+
+```bash
+REFRESH=1 Rscript adhoc/wind_tc_validation/03_era5_diagnostics.R
+```
+
+Because the signature includes the panel's mtime and size, these caches are
+machine-local by construction and are gitignored rather than committed — a fresh
+checkout would find every one of them stale anyway.

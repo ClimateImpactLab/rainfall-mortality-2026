@@ -37,15 +37,23 @@ suppressPackageStartupMessages({
 # Paths
 # -----------------------------
 
-processed_dir <- "/project/cil/gcp/estimation/rainfall-mortality/external_data/young_hsiang_tc_mortality/processed"
+# The panel location is resolved in _wind_common.R (env var, then the cluster
+# path, then a local mirror), so this check and the regressions in 02-04 cannot
+# end up reading different copies of the panel.
+.adhoc <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  d <- if (length(a) == 1) dirname(normalizePath(sub("^--file=", "", a))) else normalizePath(getwd())
+  while (!file.exists(file.path(d, "_common.R")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+source(file.path(.adhoc, "_common.R"))
+source(file.path(.adhoc, "wind_tc_validation", "_wind_common.R"))
 
-panel_file <- file.path(
-  processed_dir,
-  "young_hsiang_state_month_era5land_wind_1950_2015.csv"
-)
+panel_file <- PANEL_CSV
 
+# the checks workbook lives beside the panel it describes, wherever that is
 workbook_file <- file.path(
-  processed_dir,
+  dirname(panel_file),
   "checks",
   "era5land_vs_young_hsiang_wind_checks.xlsx"
 )

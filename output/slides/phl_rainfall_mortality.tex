@@ -1,0 +1,868 @@
+%============================================================================%
+% Philippines: rainfall & temperature mortality response functions
+%
+% Figures/tables are produced by adhoc/phl/01_phl_response_functions.R
+% Compile from this directory:  latexmk -pdf phl_rainfall_mortality.tex
+%============================================================================%
+\documentclass[10pt, aspectratio=169]{beamer}
+
+% dove is a beamer COLOR theme (greyscale, minimal), not a presentation theme
+\usetheme{default}
+\usecolortheme{dove}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{caption}{\insertcaption}
+\setbeamerfont{title}{series=\bfseries}
+\setbeamerfont{frametitle}{series=\bfseries}
+\setbeamercolor{frametitle}{fg=black}
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}   % provides a bold sans face, so bold frame titles resolve
+
+\graphicspath{{../figures/phl/}}
+
+% panel-structure macros (\phlNobs, \phlNadmthree, ...) written by the R script
+\input{../tables/phl/panel_facts.tex}
+
+% section divider slides
+\AtBeginSection[]{%
+  \begin{frame}[plain]
+    \vfill
+    \centering
+    {\usebeamerfont{title}\insertsectionhead}
+    \vfill
+  \end{frame}
+}
+
+\title{Rainfall, Temperature and Mortality in the Philippines}
+\subtitle{Municipality-level response functions, \phlYearMin--\phlYearMax}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}[plain]
+  \titlepage
+\end{frame}
+
+%============================================================================%
+\section{Data}
+%============================================================================%
+
+\begin{frame}{The panel}
+  \begin{itemize}
+    \item New Philippines mortality panel, merged to gridded climate and
+          GHSL settlement data.
+    \item \textbf{\phlNadmthree} municipalities (adm3), nested in
+          \textbf{\phlNadmtwo} provinces (adm2) and \textbf{\phlNadmone}
+          regions (adm1).
+    \item Annual, \phlYearMin--\phlYearMax, balanced. The pandemic years are
+          retained and handled with a control rather than dropped (see the
+          COVID section).
+    \item Three age groups: 0--4, 5--64, 65+. The all-ages total
+          (\texttt{agegroup} 0) is dropped.
+    \item \textbf{\phlNobs} municipality $\times$ year $\times$ age
+          observations in the estimation sample. BARMM is almost entirely
+          absent (8 of 127 municipalities) --- see the maps.
+  \end{itemize}
+
+  \vspace{0.5em}
+  \textbf{Climate.} Daily ERA5-Land precipitation and temperature, aggregated
+  to annual sums of daily polynomial terms. CHIRPS precipitation is used as an
+  alternative product.
+\end{frame}
+
+\begin{frame}{Two notes on the climate variables}
+  \begin{itemize}
+    \item The regressors are \emph{annual sums of daily powers},
+          $\widetilde{P}^{(k)}_{it} = \sum_{d \in t} P_{id}^{k}$, not powers of
+          the annual total. Response functions are therefore interpreted over
+          \textbf{daily} values.
+    \item Precipitation curves are evaluated over 0--300 mm/day and
+          temperature over 15--35$^\circ$C, which spans the support observed in
+          the Philippines.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{The climate}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{map_climate.png}
+  \end{center}
+  {\scriptsize Municipality means over 2006--2024, ERA5-Land. The eastern
+  seaboard --- the typhoon-facing coast --- is both the wettest and, in
+  eastern Mindanao, the most variable year to year. Grey: municipalities absent
+  from the mortality panel --- almost all of BARMM (119 of its 127
+  municipalities; only 8 appear in the panel), reflecting civil-registration
+  coverage there rather than a merge failure.}
+\end{frame}
+
+\begin{frame}{The heterogeneity covariates}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{map_covariates.png}
+  \end{center}
+  {\scriptsize Urban share is the GHSL population-based measure averaged over
+  the sample; settlement class is each municipality's modal GHSL SMOD class;
+  GDP per capita varies only at the region (adm1) level --- the visual
+  reminder of why the income margin is coarse.}
+\end{frame}
+
+\begin{frame}{Mortality geography}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{map_mortality.png}
+  \end{center}
+  {\scriptsize Mean winsorised death rates by municipality. Note the
+  independent colour scales: 65+ rates are roughly twenty times the other
+  groups. The sparse-looking north-Luzon interior for 0--4 reflects small
+  cohorts and many zero-death municipality-years, the same cells the count
+  Poisson and log-OLS estimators treat differently.}
+\end{frame}
+
+%============================================================================%
+\section{Summary Statistics}
+%============================================================================%
+
+\begin{frame}{Summary statistics}
+  \begin{center}
+    \footnotesize
+    \input{../tables/phl/summary_stats.tex}
+  \end{center}
+  \vspace{0.3em}
+  {\scriptsize Estimation sample. Mortality rates are deaths per 100,000.
+  Climate variables are annual totals except temperature, reported as the
+  implied daily mean.}
+\end{frame}
+
+%============================================================================%
+\section{Empirical Strategy}
+%============================================================================%
+
+\begin{frame}{Estimating equation}
+  For municipality $i$, age group $a$, year $t$:
+  \begin{align*}
+    D_{ait} = \exp\Big(
+      &\sum_{k=1}^{K_T} \beta^{T}_{ak}\, \widetilde{T}^{(k)}_{it}
+      + \sum_{k=1}^{K_P} \beta^{P}_{ak}\, \widetilde{P}^{(k)}_{it}
+      + \mu_{a i c(t)} + \nu_{a t r(i)} \Big) \cdot \varepsilon_{ait}
+  \end{align*}
+  where
+  \begin{itemize}
+    \item $D_{ait}$ is the death rate per 100,000, winsorised at the 99th
+          percentile within age group;
+    \item $\widetilde{X}^{(k)}_{it} = \sum_{d \in t} X_{id}^{k}$ is the annual
+          sum of daily values raised to the $k$th power;
+    \item $\mu_{a i c(t)}$ is a municipality $\times$ age $\times$
+          pandemic-era effect, where $c(t)$ is the era containing year $t$
+          (pre-2020, 2020--22, 2023--24);
+    \item $\nu_{a t r(i)}$ is a province $\times$ year $\times$ age effect,
+          where $r(i)$ is the province containing municipality $i$.
+  \end{itemize}
+  \vspace{0.3em}
+  Default uses $K_P = K_T = 3$ and specification (4) below. Estimated by
+  Poisson pseudo-maximum likelihood, weighted by
+  population share, with standard errors clustered at the province (adm2)
+  level.
+\end{frame}
+
+\begin{frame}{Response functions}
+  The reported curve is the change in the death rate from a day at $x$ relative
+  to a reference day $x_{\text{ref}}$:
+  \[
+    f^{P}_{a}(p) \;=\; \sum_{k=1}^{K_P} \hat\beta^{P}_{ak}
+      \left( p^{k} - p_{\text{ref}}^{k} \right),
+    \qquad p_{\text{ref}} = 0 \text{ mm}
+  \]
+  \[
+    f^{T}_{a}(\tau) \;=\; \sum_{k=1}^{K_T} \hat\beta^{T}_{ak}
+      \left( \tau^{k} - \tau_{\text{ref}}^{k} \right),
+    \qquad \tau_{\text{ref}} = 27^{\circ}\mathrm{C}
+  \]
+  Confidence intervals are delta-method, using the clustered variance matrix.
+
+  \vspace{0.8em}
+  \textbf{Heterogeneity.} Each margin replaces $\beta^{P}_{ak}$ with
+  $\beta^{P}_{akg}$, where $g = g(i,t)$ indexes the heterogeneity cell, so the
+  precipitation polynomial is fully interacted with age $\times$ group:
+  \[
+    \sum_{k=1}^{K_P} \sum_{g} \beta^{P}_{akg}\,
+      \mathbf{1}\{g(i,t) = g\}\, \widetilde{P}^{(k)}_{it}
+  \]
+\end{frame}
+
+\begin{frame}{Fixed-effects specifications}
+  \begin{center}
+    \small
+    \begin{tabular}{ll}
+      \toprule
+      & Fixed effects \\
+      \midrule
+      (1) Year $\times$ age      & $\mu_{ai} + \nu_{at}$ \\
+      (2) + province-age trends  & $\mu_{ai} + \nu_{at} + \delta_{a r(i)} \cdot t$ \\
+      (3) Saturated              & $\mu_{ai} + \nu_{a t r(i)}$ \\
+      \textbf{(4) + pandemic control} & $\mu_{a i c(t)} + \nu_{a t r(i)}$ \\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+  \vspace{0.5em}
+  $\mu_{ai}$ is a municipality $\times$ age effect; $r(i)$ denotes the
+  \textbf{province} (adm2) containing municipality $i$ and $c(t)$ the pandemic
+  era containing year $t$. \textbf{(4) is the default} used throughout. These are the
+  single-country analogues of the specifications used in the global
+  Carleton-style regressions elsewhere in the project: with one country,
+  country $\times$ year $\times$ age collapses to year $\times$ age.
+\end{frame}
+
+%============================================================================%
+\section{Baseline Response Functions}
+%============================================================================%
+
+\begin{frame}{Precipitation response, by age group}
+  \begin{center}
+    \includegraphics[width=0.78\textwidth]{baseline_precip.png}
+  \end{center}
+  {\scriptsize Default specification (4), full 2006--2024 panel with the
+  pandemic control. Change in deaths per 100,000 relative to a day with no rainfall. Shaded bands are 95\% confidence intervals.}
+\end{frame}
+
+\begin{frame}{Fit diagnostics for the default specification}
+  \begin{center}
+    \includegraphics[width=0.9\textwidth]{fit_diagnostics.png}
+  \end{center}
+  {\scriptsize Non-lean refit of the default model; squared correlation
+  between actual and fitted is $0.62$ / $0.82$ / $0.79$ for ages 0--4 / 5--64 /
+  65+, almost all of it from the fixed effects rather than from climate. The
+  right-hand panels use relative error $(y-\hat\mu)/\hat\mu$, which is
+  scale-free and unaffected by the weighting; population bins are formed
+  \emph{within} age group.
+  \\[0.3em]
+  \textbf{Top left}: mass on the 45$^\circ$ line; the band at zero for 0--4 is
+  the zero-death cells. \textbf{Bottom left}: no funnel, so the Poisson
+  variance assumption is not obviously violated; 65+ is most dispersed.
+  \textbf{Top right}: the time drift is \emph{entirely} a small-municipality
+  phenomenon --- large municipalities sit flat on zero throughout, while small
+  ones move from about $-6\%$ in 2007 to $+10\%$ by 2019 before the
+  pandemic-era effect resets them. Since the estimator is population-weighted,
+  it fits the large units and lets the small ones drift; the direction is
+  consistent with improving rural death registration over the period.
+  \textbf{Bottom right}: median error is flat across the whole size range, and
+  the IQR fans out sharply below $\sim$3,000 people --- ordinary small-count
+  noise, not bias.}
+\end{frame}
+
+\begin{frame}{Residual geography}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{center}
+        \includegraphics[width=0.9\textwidth]{map_residuals.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \vspace{2em}
+      Mean relative error $(y-\hat\mu)/\hat\mu$ by municipality, pooled over
+      years and ages; the colour scale is clipped at the 99th percentile of
+      $|$error$|$.
+      \vspace{0.5em}
+
+      The pattern is close to spatial noise --- no coherent typhoon-corridor
+      or coastal signature, and no island-group block. That is reassuring for
+      the fixed-effects design: what the model misses looks idiosyncratic
+      rather than geographic.
+      \vspace{0.5em}
+
+      Grey municipalities are those absent from the panel, overwhelmingly
+      BARMM.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Temperature response --- not identified in this panel}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{baseline_tavg.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \vspace{1em}
+      The fitted curves are wrong-signed somewhere at every age: hotter days
+      imply \emph{lower} mortality for 5--64 (significantly) and 65+, while
+      for 0--4 the heat slope is positive but \emph{cold} days imply
+      significantly lower mortality than a 27$^\circ$C day.
+      \vspace{0.4em}
+
+      Not a solver problem (diagnostics converge in a handful of iterations;
+      tighter tolerances move coefficients by $\sim 3\times10^{-12}$) --- an
+      identification problem:
+      \begin{itemize}
+        \item the curves reshape substantially across fixed-effects sets
+              (next slide);
+        \item the polynomial terms are 0.99 collinear after the fixed effects.
+      \end{itemize}
+      Temperature is retained as a control, not interpreted.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Why: the fixed effects absorb the temperature signal}
+  \begin{columns}[T]
+    \begin{column}{0.46\textwidth}
+      \vspace{1.2em}
+      \begin{center}
+        \scriptsize
+        \input{../tables/phl/identification.tex}
+      \end{center}
+      \vspace{0.8em}
+      {\scriptsize Computed under specification (1), whose year $\times$ age
+      effects are the mildest time controls. Temperature in the Philippines
+      is spatially smooth and dominated by national interannual (ENSO) swings,
+      so year effects remove almost all of it: the identifying variation left in
+      daily temperature is \textbf{0.127$^\circ$C}. A quadratic over 15--35$^\circ$C
+      cannot be fitted off that. Rainfall retains roughly five times as much.}
+    \end{column}
+    \begin{column}{0.52\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{temp_fe_instability.png}
+      \end{center}
+      {\scriptsize Temperature response by fixed-effects set ($K_T=3$). The
+      heat slope flips sign across the sets --- at 33$^\circ$C the 65+ response
+      is $-0.003$ under year $\times$ age effects but $+0.002$ with
+      province-age trends --- with no stable shape. The precipitation response
+      at 200 mm/day, by contrast, stays positive for every age group across all
+      four specifications.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+%============================================================================%
+\section{Robustness}
+%============================================================================%
+
+\begin{frame}{Precipitation polynomial order}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{robust_poly_order.png}
+  \end{center}
+  {\scriptsize Temperature polynomial held at order 3 throughout. Order 1
+  forces monotonicity in daily rainfall and is shown for reference; see the
+  polynomial-selection results for formal comparison.}
+\end{frame}
+
+\begin{frame}{Which polynomial order? Formal selection}
+  \begin{center}
+    \includegraphics[width=0.92\textwidth]{poly_selection.png}
+  \end{center}
+  \vspace{-0.3em}
+  {\scriptsize \textbf{The two criteria disagree, and the disagreement is the
+  finding.} In-sample AIC/BIC fall monotonically in the order (best at 5) ---
+  the usual in-sample reward for flexibility, which at $n=84{,}075$ the
+  parameter penalty never offsets. But \textbf{out-of-sample deviance is
+  flat}: the spread across orders 1--5 is $1.5\times10^{-6}$ against a
+  fold-to-fold standard error of $2.9\times10^{-4}$, roughly \textbf{190 times
+  larger}. None of the extra curvature generalises. Order 3 (the default) is
+  defensible; so is order 1. Computed by
+  \texttt{03\_phl\_poly\_selection.R}, which is kept out of the main pipeline
+  because it refits the model 30 times.}
+\end{frame}
+
+\begin{frame}{Two caveats on the selection exercise}
+  \begin{itemize}
+    \item \textbf{The criteria shown are from an \emph{unweighted} refit.}
+          Under the estimation default the likelihood is on the scale of
+          population \emph{shares}, so the total quasi-log-likelihood is about
+          $-751$ across 84k rows and AIC's $2k$ penalty swamps it: the gap
+          between orders 1 and 2 is $5.85$ against a pure penalty of
+          $2\times3 = 6$. Weighted AIC/BIC here are parameter-counting, not
+          model comparison, and would trivially select order 1. Both variants
+          are in \texttt{poly\_selection.csv}.
+    \item \textbf{Folds are random at the observation level}, not blocked by
+          municipality or year --- blocking would leave held-out rows with no
+          identified fixed effect to predict from. So this measures functional
+          form, not forecasting skill into new places or years. About 82\% of
+          held-out rows are predictable; the rest fall in fixed-effect cells
+          that vanish from the training fold.
+  \end{itemize}
+  \vspace{0.5em}
+  {\scriptsize Taken with the wide confidence bands throughout, the reading is
+  that this panel pins down the \emph{level} of the rainfall--mortality
+  relationship far better than its \emph{shape}.}
+\end{frame}
+
+\begin{frame}{Fixed-effects specification}
+  \begin{center}
+    \includegraphics[width=\textwidth]{robust_fe.png}
+  \end{center}
+  {\scriptsize Specifications (1)--(4) as defined above.}
+\end{frame}
+
+\begin{frame}{Climate product: ERA5-Land vs CHIRPS}
+  \begin{center}
+    \includegraphics[width=0.85\textwidth]{robust_product.png}
+  \end{center}
+  {\scriptsize Both columns use ERA5-Land temperature controls; only the
+  precipitation product differs.}
+\end{frame}
+
+\begin{frame}{Unit of analysis: municipality vs province}
+  \begin{center}
+    \includegraphics[width=0.85\textwidth]{robust_adm2.png}
+  \end{center}
+  {\scriptsize Left: the default municipality (adm3) panel. Right: collapsed to
+  provinces (adm2), 6,270 observations, with fixed effects shifted up one level
+  (province $\times$ age $\times$ era and region $\times$ year $\times$ age).
+  Point estimates are close --- at 200 mm/day and 65+, $0.0039$ against
+  $0.0026$ --- so the result is not an artefact of the spatial unit. Province
+  aggregation actually \emph{retains} slightly more identifying rainfall
+  variation after fixed effects (23.2\% vs 17.8\%), because the coarser
+  fixed effects absorb less.}
+\end{frame}
+
+\begin{frame}{How the aggregation is done}
+  Two choices matter when collapsing municipalities into provinces:
+  \begin{itemize}
+    \item \textbf{The outcome aggregates exactly.} A province death rate is
+          total deaths over total population, which \emph{is} the
+          population-weighted mean of its municipality rates --- no modelling
+          choice. Winsorisation is re-applied at the province level, since the
+          99th percentile of a different distribution is a different number.
+    \item \textbf{The climate regressors are averaged as polynomial terms},
+          not recomputed from averaged rainfall:
+          \[
+            \textstyle\sum_i w_i \big( \sum_d P_{id}^{k} \big)
+            \quad\text{not}\quad
+            \big( \sum_i w_i \sum_d P_{id} \big)^{k}
+          \]
+          Because the model is linear in these terms, the first makes the
+          province response function exactly the population-weighted average
+          of its municipalities' response functions. The second is a different
+          object --- a function of average rainfall rather than the average of
+          the function --- and would understate extremes by Jensen's
+          inequality.
+    \item Weights are \textbf{time-invariant} (period-mean municipal
+          population), so that a mortality shock which moves population cannot
+          also move measured climate exposure.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Estimator: Poisson (rate and count) vs OLS (levels and logs)}
+  \begin{center}
+    \includegraphics[width=\textwidth]{robust_estimator.png}
+  \end{center}
+  {\scriptsize Default specification (4). The default is Poisson on the
+  winsorised rate, population-weighted; the count model is Poisson on raw
+  deaths with a $\log$(population) offset, unweighted, and keeps zero-death
+  cells. The first three panels are all in log points and directly comparable;
+  OLS in levels (right) is in deaths per 100,000 --- note the free $y$ scales.
+  The log-OLS sample drops zero-deathrate cells, mostly ages 0--4 ($\sim$5\% of
+  that group).}
+\end{frame}
+
+\begin{frame}{Dynamics: lags, cumulative effect, and a lead placebo}
+  \begin{center}
+    \includegraphics[width=\textwidth]{dynamics.png}
+  \end{center}
+  {\scriptsize Default specification (4) with contemporaneous, one- and
+  two-year-lagged precipitation polynomials entered jointly (first four
+  panels; sample starts two years later to accommodate the lags).
+  \textbf{No harvesting}: the lags enter weakly positive, not negative, and
+  the cumulative response exceeds the contemporaneous one (65+ at 200 mm/day:
+  $0.0059$ vs $0.0026$), though the cumulative CI spans zero. The rightmost
+  panel is a falsification test from a separate regression; annual rainfall is
+  serially uncorrelated within municipality (AR(1) $\approx -0.04$), so the
+  lead cannot proxy current exposure. Its CI spans zero at every age, but the
+  test is low-powered --- the placebo CI is wide enough to contain effects the
+  size of the main estimate.}
+\end{frame}
+
+\begin{frame}{Leave-one-region-out}
+  \begin{center}
+    \includegraphics[width=0.9\textwidth]{loro.png}
+  \end{center}
+  {\scriptsize Response at 200 mm/day, re-estimated 17 times dropping one
+  region (adm1) at a time. Dashed line marks the full-sample estimate. A
+  result driven by a single region --- e.g. the typhoon corridor --- would
+  show one point far from the dashed line.}
+\end{frame}
+
+\begin{frame}{Weights and winsorisation}
+  \begin{columns}[T]
+    \begin{column}{0.44\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{robust_weights.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.54\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{robust_winsor.png}
+      \end{center}
+    \end{column}
+  \end{columns}
+  {\scriptsize Left: population-weighted (default) vs unweighted. The gap is
+  real: at 200 mm/day the unweighted 65+ estimate roughly doubles ($0.0039 \to
+  0.0072$) while 5--64 halves ($0.0031 \to 0.0017$), pointing to larger old-age
+  effects in smaller municipalities --- consistent with the rural/urban
+  heterogeneity section. Right: winsorisation at p99 (default, inherited from
+  the Carleton pipeline), p95, and none --- estimates barely move.}
+\end{frame}
+
+\begin{frame}{Clustering}
+  \begin{center}
+    \small
+    \input{../tables/phl/clustering.tex}
+  \end{center}
+  \vspace{0.4em}
+  {\scriptsize Standard errors of the response at 200 mm/day under alternative
+  clustering; point estimates identical by construction. Region-level
+  clustering (17 clusters) barely moves the SEs but its asymptotics are poor.
+  \textbf{Two-way province-and-year clustering raises the SEs by 40--100\%},
+  and at 200 mm/day no age group then excludes zero --- serial or common
+  shocks within years matter for inference here.}
+\end{frame}
+
+%============================================================================%
+\section{COVID}
+%============================================================================%
+
+\begin{frame}{The pandemic sits inside the estimation window}
+  \begin{center}
+    \includegraphics[width=\textwidth]{mortality_trend.png}
+  \end{center}
+  {\scriptsize Population-weighted mean death rate by year. Mortality at 65+
+  rises about 45\% in 2021 and does not return to its pre-pandemic level.
+  Year $\times$ age effects absorb the national component of this, but not any
+  covariance between local pandemic severity and local weather.}
+\end{frame}
+
+\begin{frame}{COVID sample sensitivity is modest under the saturated FEs}
+  \begin{center}
+    \includegraphics[width=\textwidth]{robust_covid.png}
+  \end{center}
+  {\scriptsize All four samples estimated under the saturated specification (3),
+  so the comparison is not mediated by the pandemic control. The samples differ
+  by well under one standard error --- at 200 mm/day and age 65+, $0.0059$,
+  $0.0060$, $0.0054$ and $0.0069$ against a standard error of about $0.003$.
+  The province $\times$ year $\times$ age effects already absorb most of the
+  pandemic shock. Under the weaker year $\times$ age effects the same comparison
+  showed the full sample roughly doubling the effect, so how much COVID matters
+  is itself a function of the fixed effects.}
+\end{frame}
+
+\begin{frame}{The default: a pandemic control, not a truncated sample}
+  \begin{center}
+    \includegraphics[width=\textwidth]{pandemic_control.png}
+  \end{center}
+  \vspace{-0.3em}
+  {\scriptsize The saturated specification already absorbs any pandemic shock
+  common to a province $\times$ year $\times$ age cell, so the useful control is
+  one level lower: a separate intercept for each \textbf{municipality $\times$
+  age in each pandemic era} (pre-2020, 2020--22, 2023--24), which soaks up
+  locality-specific COVID mortality while leaving within-era weather variation
+  intact. At 200 mm/day for ages 5--64 it returns $0.0031$, against $0.0035$ on
+  the pre-COVID sample and $0.0065$ with no control --- i.e. it recovers
+  essentially the pre-COVID estimate while using all 19 years, with standard
+  errors about 15\% tighter --- which is why this is the default here, rather
+  than discarding five years of data.}
+\end{frame}
+
+%============================================================================%
+\section{Heterogeneity}
+%============================================================================%
+
+\begin{frame}{Urban population share}
+  \begin{center}
+    \includegraphics[width=\textwidth]{het_urban.png}
+  \end{center}
+  {\scriptsize Precipitation polynomial interacted with age $\times$
+  urban-share bin. Bins are \textbf{terciles of the urban-share
+  distribution}, not equal-width: urban share is left-skewed (median 69\%), so
+  equal-width bins would put 3.4 times as many municipality-years in the top
+  bin as the bottom and estimate the rural response off far less data. Each
+  bin here holds about 9,600 observations.}
+\end{frame}
+
+\begin{frame}{Urban population share --- five bins}
+  \begin{center}
+    \includegraphics[width=\textwidth]{het_urban5.png}
+  \end{center}
+  {\scriptsize Quintiles of the urban-share distribution, about 5,800
+  municipality-years each. The finer grid buys little: no monotone gradient in
+  urbanisation emerges, and only the most-urban bin for ages 0--4 excludes zero
+  at 200 mm/day ($0.025$ $[0.007,\,0.042]$). Splitting further mostly costs
+  precision.}
+\end{frame}
+
+\begin{frame}{Is the urban gradient real? Three tests}
+  \begin{center}
+    \includegraphics[width=0.82\textwidth]{urban_gradient.png}
+  \end{center}
+  \vspace{-0.4em}
+  {\scriptsize Response at 200 mm/day by urban quintile. The eye is drawn to
+  the top-right point; the tests below ask whether that is warranted.}
+\end{frame}
+
+\begin{frame}{Testing the threshold hypothesis directly}
+  \begin{center}
+    \includegraphics[width=0.8\textwidth]{urban_threshold.png}
+  \end{center}
+  \vspace{-0.3em}
+  {\scriptsize Difference in the 200 mm/day response between municipalities
+  above and below each urban-share cutoff. \textbf{No cutoff yields a
+  significant difference at any age} --- the smallest $p$-value across all 18
+  tests is $0.11$. Testing the top quintile against \emph{all} others pooled
+  (the most powerful version of ``only the really urban places'') gives
+  $+0.013$ $(p=0.13)$ for ages 0--4, $+0.0005$ $(p=0.88)$ for 5--64 and
+  $+0.0002$ $(p=0.95)$ for 65+.}
+\end{frame}
+
+\begin{frame}{Splitting the top of the distribution finer}
+  \begin{center}
+    \includegraphics[width=\textwidth]{het_urban_topbins.png}
+  \end{center}
+  \vspace{-0.2em}
+  {\scriptsize Bins chosen to be fine where the hypothesis lives:
+  0--60, 60--80, 80--90, 90--95, 95--100\% urban. At 200 mm/day the
+  significant cells are (80--90]\ and (90--95]\ for ages 0--4, (90--95]\ for
+  65+ --- and \textbf{[0--60], the \emph{least} urban bin, for 65+}. The
+  \textbf{most} urban bin (95--100\%) is not significant at any age.}
+\end{frame}
+
+\begin{frame}{What the urban result actually is}
+  \begin{itemize}
+    \item \textbf{The threshold hypothesis is not supported.} No cutoff from
+          60\% to 95\% separates damaging from non-damaging municipalities,
+          and the top quintile is indistinguishable from the rest.
+    \item \textbf{Which bin is ``significant'' moves with the binning.} With
+          quintiles it was (88.8--100]; with the finer grid it is (90--95],
+          while (95--100] is not; and for 65+ the \emph{least} urban bin also
+          clears. That instability is the signature of noise rather than a
+          threshold.
+    \item \textbf{But there is something --- and it is about age, not
+          urbanisation.} For ages 0--4 the point estimate is positive in
+          \emph{every} bin ($0.014$, $0.007$, $0.019$, $0.027$, $0.020$) and
+          the pooled estimate sits just short of significance
+          ($0.015$, s.e.\ $0.008$). The most defensible reading is a broad
+          infant response to extreme rainfall across the whole urban
+          distribution, which bin-by-bin testing makes \emph{look} like an
+          urban threshold.
+  \end{itemize}
+  \vspace{0.2em}
+  {\scriptsize Distinguishing these needs a mechanism, not more bins:
+  cause-of-death for 0--4 (waterborne disease, drowning) is the test, and the
+  data is already cleaned on the cluster.}
+\end{frame}
+
+\begin{frame}{Settlement type (GHSL degree of urbanisation)}
+  \begin{center}
+    \includegraphics[width=\textwidth]{het_smod.png}
+  \end{center}
+  {\scriptsize GHSL SMOD classes collapsed to rural (10--13), peri-urban
+  (21--22) and urban centre (23, 30).}
+\end{frame}
+
+\begin{frame}{Income}
+  \begin{center}
+    \includegraphics[width=\textwidth]{het_income.png}
+  \end{center}
+  {\scriptsize Terciles of region-level average GDP per capita. Income varies
+  only across the 17 regions, so this margin is coarse.}
+\end{frame}
+
+\begin{frame}{Long-run precipitation (adaptation margin)}
+  \begin{center}
+    \includegraphics[width=\textwidth]{het_lrprecip.png}
+  \end{center}
+  {\scriptsize Terciles of region-level long-run mean annual precipitation.}
+\end{frame}
+
+\begin{frame}{Coastal exposure}
+  \begin{columns}[T]
+    \begin{column}{0.30\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{map_coastal.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.68\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{het_coastal.png}
+      \end{center}
+    \end{column}
+  \end{columns}
+  \vspace{-0.2em}
+  {\scriptsize Exposure is the share of each municipality's perimeter facing
+  the sea, computed from the adm3 shapefile by subtracting shared borders from
+  the perimeter (\texttt{04\_phl\_coastal.R}). 41\% of municipalities are
+  landlocked; the coastal ones are split at their median (37\%). Validation:
+  the measure returns 0 for inland Ilocos Norte and 1 for Batanes and the
+  Babuyan and Polillo islands.}
+\end{frame}
+
+\begin{frame}{Coastal exposure: the sign is the wrong way round}
+  \begin{itemize}
+    \item At 200 mm/day the \textbf{landlocked} bin carries the largest
+          effects and is the \emph{only} one whose confidence intervals exclude
+          zero --- ages 0--4: $0.025$ $[0.006,\,0.045]$; 65+: $0.0068$
+          $[0.0005,\,0.0131]$. Highly-coastal municipalities show smaller,
+          insignificant responses at every age.
+    \item That is the opposite of a storm-surge story, and consistent with two
+          non-exclusive readings: heavy rain drains quickly to the sea on the
+          coast but \textbf{accumulates in inland river valleys and basins},
+          and coastal municipalities facing chronic typhoon exposure are
+          \textbf{better adapted} (warning systems, evacuation, building
+          practice) than inland ones that see extreme rainfall rarely.
+    \item \textbf{Do not over-read it.} Only 2 of 9 age $\times$ bin cells
+          exclude zero, the intervals are wide, and the bins are cross-
+          sectional so the contrast is between places rather than within them.
+          A convincing version needs the daily extreme-rainfall measures and
+          the cause-of-death split --- drowning and injury deaths should load
+          on this margin if the flooding mechanism is right.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Marginal effects at 50, 100 and 200 mm/day}
+  \begin{center}
+    \includegraphics[width=0.9\textwidth]{marginal_effects.png}
+  \end{center}
+  {\scriptsize Point estimates with 95\% confidence intervals, read off the
+  fitted response curves at the indicated daily rainfall levels.}
+\end{frame}
+
+%============================================================================%
+\section{Alternative Functional Form}
+%============================================================================%
+
+\begin{frame}{Polynomial in annual, rather than daily, rainfall}
+  \begin{columns}[T]
+    \begin{column}{0.54\textwidth}
+      \begin{center}
+        \includegraphics[width=\textwidth]{annual_form.png}
+      \end{center}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \vspace{1.5em}
+      Everything else in this deck uses the Carleton form, where the order-$k$
+      regressor is $\sum_d P_{id}^{k}$ and the curve is read over \emph{daily}
+      rainfall. Here the regressor is $\big(\sum_d P_{id}\big)^{k}$ instead, so
+      the curve is read over \emph{annual} rainfall.
+      \vspace{0.6em}
+
+      These answer different questions --- what one wet day does, versus what a
+      wet year does --- and coincide only if rainfall were constant within the
+      year.
+      \vspace{0.6em}
+
+      Under the default fixed effects the annual form is very imprecise: every
+      confidence interval spans zero across 1,500--4,000 mm/year. Province
+      $\times$ year effects leave little annual-total variation to work with.
+    \end{column}
+  \end{columns}
+  \vspace{0.2em}
+  {\scriptsize Dashed line marks the reference, the sample median annual
+  rainfall. Default specification (4), full panel.}
+\end{frame}
+
+%============================================================================%
+\section{Comparison with Global Estimates}
+%============================================================================%
+
+\begin{frame}{Philippines vs the project's global response}
+  \begin{center}
+    \includegraphics[width=0.95\textwidth]{global_overlay.png}
+  \end{center}
+  {\scriptsize The PHL response (default specification (4)) overlaid on the
+  global precipitation response from the project's Carleton-sample regressions
+  (ERA5-Land, main global specification: adm2 $\times$ age and country
+  $\times$ year $\times$ age effects). Both are Poisson, so both curves are in
+  log points. At 200 mm/day the PHL 5--64 response ($0.0031$) is roughly an
+  eighth of the global estimate ($0.0246$); 65+ is comparable ($0.0039$ vs
+  $0.0057$). Samples, admin units and fixed effects differ, so read this as
+  context rather than a like-for-like test.}
+\end{frame}
+
+%============================================================================%
+\section{Drought vs Extreme Rainfall (Prototype)}
+%============================================================================%
+
+\begin{frame}{Separating drought from extreme rainfall: design}
+  Drought and flood mortality operate at different timescales, so they enter
+  as \emph{separate exposures} in one regression:
+  \[
+    D_{ait} = \exp\Big( \underbrace{f_a(\text{daily polynomial})}_{\text{wet-day extremes}}
+      + \underbrace{g_a(\text{annual anomaly bins})}_{\text{cumulative deficit/surplus}}
+      + \text{temp} + \mu_{a i c(t)} + \nu_{a t r(i)} \Big)\cdot\varepsilon_{ait}
+  \]
+  \begin{itemize}
+    \item Prototype drought index: within-municipality \textbf{z-score of
+          annual rainfall} (a poor man's SPI --- monthly totals for a real SPI
+          need the cluster climate build). Bins: severe ($z<-1.5$), moderate
+          ($-1.5$ to $-0.5$), normal (reference), wet, very wet.
+    \item \textbf{Identification checked first} (table below): the
+          absorption is substantial --- the saturated effects remove
+          three-quarters of the z-score's variation --- but far from fatal:
+          the severe-drought \emph{dummy} keeps about half its variation,
+          versus 9\% for temperature. PHL droughts have more subnational
+          texture than the ENSO narrative suggests.
+    \item Bin shares: severe drought 6.9\% of municipality-years, moderate
+          25\%; symmetric on the wet side.
+  \end{itemize}
+  \begin{center}
+    \scriptsize
+    \input{../tables/phl/drought_absorption.tex}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Prototype results: annual-anomaly bins, by fixed effects}
+  \begin{center}
+    \includegraphics[width=\textwidth]{drought_prototype.png}
+  \end{center}
+  {\scriptsize Effect of a drought/wet year relative to a normal rainfall year
+  ($|z| \le 0.5$), estimated alongside the daily precipitation polynomial and
+  temperature controls. Under the weak year $\times$ age effects, drought
+  years show \emph{higher} mortality (65+ moderate drought: $+5.5\%$), but
+  this collapses --- and for 65+ turns significantly \emph{negative}
+  ($-1.0\%$, se $0.4\%$) --- once province $\times$ year effects are added,
+  the signature of regional confounding rather than a drought effect. The
+  precise near-zero under the default is itself informative: in this wet,
+  non-agrarian-margin country there is no detectable drought mortality. The
+  multi-country panel, with drought-prone regions and staggered timing, is
+  where this margin gets its real test.}
+\end{frame}
+
+%============================================================================%
+\section{Caveats}
+%============================================================================%
+
+\begin{frame}{Caveats and next steps}
+  \begin{itemize}
+    \item \textbf{The pandemic control is doing real work only for 5--64.}
+          It reproduces the pre-COVID estimate closely for ages 5--64, but for
+          65+ it lands below both the uncontrolled and the pre-COVID estimate.
+          Under the saturated fixed effects the COVID-sample sensitivity is in
+          any case well within one standard error --- it was large only under
+          the weaker year $\times$ age effects.
+    \item \textbf{The temperature response is not identified.} Every age group
+          is wrong-signed somewhere --- hotter days imply lower mortality for
+          5--64 and 65+, colder days imply lower mortality for 0--4 --- and the
+          shapes reshape substantially across fixed-effects sets and polynomial
+          orders. After the fixed effects only 0.127$^\circ$C of daily
+          temperature variation remains and the polynomial terms are 0.99
+          collinear (VIF 55), so the curves are essentially extrapolation.
+          Temperature is kept as a control and should not be interpreted.
+    \item \textbf{Income variation is coarse.} \texttt{gdppc\_adm1\_avg} takes
+          only seven distinct values across 17 regions, so the income margin is
+          close to a regional fixed effect.
+    \item \textbf{Clustering.} Standard errors are clustered at the province
+          (adm2, \phlNadmtwo\ clusters); the default fixed effects are also at
+          province $\times$ year $\times$ age, so the identifying variation is
+          within-province. Two-way province-and-year clustering raises the SEs
+          by 40--100\% and removes what significance there is at 200 mm/day
+          --- the inference is fragile to common within-year shocks.
+    \item \textbf{Coverage.} Roughly 3\% of municipality-years are missing
+          ERA5-Land climate and drop out; CHIRPS has full coverage, which is
+          worth keeping in mind when comparing the two products.
+    \item \textbf{Interpretation.} Curves are conditional on the fixed effects
+          and are not causal estimates of typhoon exposure; extreme-rainfall
+          days are sparse, so the upper end of each curve (beyond roughly
+          150 mm/day) is identified off very few observations and is
+          correspondingly imprecise.
+  \end{itemize}
+\end{frame}
+
+\end{document}

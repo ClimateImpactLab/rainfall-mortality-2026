@@ -41,6 +41,10 @@ get_weights <- function(df) {
 # For example, urban-share regressions estimate separate rainfall curves by
 # age group and urban-share group
 # `controls` adds extra regression terms, such as wind controls
+# `suffix` selects a climate product when the panel keeps suffixed column
+# names, such as `prcp_poly_1_ERA5LAND`
+# Leave it empty when the panel has already been renamed to bare
+# `prcp_poly_*` names by `use_climate_product()`
 # The default fixed effects are used by the main response regressions
 fit_response <- function(data,
                          lhs = "deathrate_w99",
@@ -51,6 +55,7 @@ fit_response <- function(data,
                          fe = c("adm2_code^CHN_ts^agegroup",
                                 "adm0_code^year^agegroup"),
                          controls = character(),
+                         suffix = "",
                          weights = ~weight,
                          cluster = ~adm1_code,
                          ...) {
@@ -70,16 +75,17 @@ fit_response <- function(data,
   
   # Temperature terms by age group
   if (tavg_order > 0) {
-    rhs <- c(rhs, paste0("i(agegroup, tavg_poly_", seq_len(tavg_order), ")"))
+    rhs <- c(rhs, paste0("i(agegroup, tavg_poly_", seq_len(tavg_order), suffix, ")"))
   }
   
   # Rainfall terms by age group
   # Heterogeneity regressions add one more grouping variable
   if (prcp_order > 0) {
     if (!is.null(interact_var)) {
-      prcp_terms <- paste0(interact_var, ":prcp_poly_", seq_len(prcp_order), ":agegroup")
+      prcp_terms <- paste0(interact_var, ":prcp_poly_", seq_len(prcp_order), suffix,
+                           ":agegroup")
     } else {
-      prcp_terms <- paste0("i(agegroup, prcp_poly_", seq_len(prcp_order), ")")
+      prcp_terms <- paste0("i(agegroup, prcp_poly_", seq_len(prcp_order), suffix, ")")
     }
     
     rhs <- c(rhs, prcp_terms)
@@ -111,7 +117,8 @@ fit_response <- function(data,
 # Heterogeneity regressions need names read from the fitted model
 # The function returned below takes one response-curve group and one polynomial
 # term number, then returns the matching coefficient name
-make_coef_names <- function(prefix, interact_var = NULL, fit = NULL) {
+# `suffix` must match the one passed to `fit_response()`
+make_coef_names <- function(prefix, interact_var = NULL, fit = NULL, suffix = "") {
   
   if (!is.null(interact_var)) {
     if (is.null(fit)) {
@@ -124,7 +131,7 @@ make_coef_names <- function(prefix, interact_var = NULL, fit = NULL) {
       want <- c(
         paste0(interact_var, group_row[[interact_var]]),
         paste0("agegroup", group_row$agegroup),
-        paste0(prefix, poly_term)
+        paste0(prefix, poly_term, suffix)
       )
       
       match <- logical(length(coef_parts))
@@ -137,9 +144,55 @@ make_coef_names <- function(prefix, interact_var = NULL, fit = NULL) {
     }
   } else {
     function(group_row, poly_term) {
-      sprintf("agegroup::%s:%s%d", group_row$agegroup, prefix, poly_term)
+      sprintf("agegroup::%s:%s%d%s", group_row$agegroup, prefix, poly_term, suffix)
     }
   }
+}
+
+
+# -----------------------------
+# Variance-covariance repair
+# -----------------------------
+
+# Repair a variance-covariance matrix that is not positive semi-definite
+# Eigen-decomposes X and floors the eigenvalues at `ridge`, which is far gentler
+# than fixest's own fix
+# fixest clips at an absolute 1e-12, which destroys inference whenever the true
+# coefficient variances sit below that, as happens with high-order polynomial
+# terms in raw units
+# Returns X untouched when it is already positive definite, so this is a no-op
+# on a well-scaled problem
+#
+# This is a safety net, not a substitute for scaling the regressors
+# fixest applies its own 1e-12 clip at fit time and `vcov_fix = FALSE` is not
+# honoured (checked in fixest 0.13.2), so by the time we see the matrix the
+# damage is already done if the polynomial terms are badly scaled
+# Scale the climate polynomials so the coefficients are O(1e-3) or larger
+fix_mat <- function(X, ridge = 1e-20) {
+  
+  dm <- dimnames(X)
+  e <- eigen(X, symmetric = TRUE)
+  if (all(e$values > 0)) {
+    return(X)
+  } else {
+    message("eigen values are negative, making ridge adjustment")
+  }
+  
+  min_pos <- min(e$values[e$values > 0], na.rm = TRUE)
+  if (min_pos < ridge) {
+    message("making ridge adjustment, since minimum positive eigen-value is small")
+    ridge <- min_pos / 10
+  }
+  
+  fixed_e <- pmax(e$values, ridge)          # floor at `ridge`
+  X <- tcrossprod(e$vectors %*% diag(fixed_e, nrow(X)), e$vectors)
+  
+  if (any(eigen(X)$values < 0)) {
+    stop("eigen values are still negative after fixing, need to change the ridge")
+  }
+  dimnames(X) <- dm
+  
+  X
 }
 
 
@@ -175,11 +228,16 @@ poly_response <- function(b, V, x, coef_names, x_ref = 0) {
 # Build one response curve for each row of `groups`
 # Main results have one row per age group
 # Heterogeneity results also include the group variable, like urban share
+# `V` overrides the fitted variance-covariance matrix
+# Pass `fix_mat(vcov(fit))` when the polynomial terms are badly enough scaled
+# that fixest's own 1e-12 eigenvalue clip is setting the standard errors
 build_response <- function(fit, x, poly_order, groups, key,
                            x_ref = 0, id = "", vcov_cluster = NULL,
-                           vcov_fix = FALSE) {
+                           vcov_fix = FALSE, V = NULL) {
   coefficients <- coef(fit)
-  vcov_matrix <- if (is.null(vcov_cluster)) {
+  vcov_matrix <- if (!is.null(V)) {
+    V
+  } else if (is.null(vcov_cluster)) {
     vcov(fit, vcov_fix = vcov_fix)
   } else {
     vcov(fit, cluster = vcov_cluster, vcov_fix = vcov_fix)
