@@ -1,0 +1,1727 @@
+---
+title: "Brazil Drought Measures Pilot"
+subtitle: "Rainfall windows, prior-20-year baseline, and annual drought variables"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: 2
+    theme: flatly
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+# ------------------------------------------------------------------------------
+# Brazil drought measures pilot
+# ------------------------------------------------------------------------------
+# This R Markdown file starts from the monthly ERA5-Land ADM2 drought file and
+# walks through the main choices for the drought part of the rainfall-mortality
+# project.
+#
+# The Brazil pilot looks at raw rainfall, 1-, 3-, 6-, and 12-month rainfall
+# totals, the prior-20-year baseline, 5th/10th percentile thresholds, z-scores,
+# rainfall deficits, monthly-to-annual summaries, and selected Brazil drought
+# episodes.
+#
+# The point is to understand what each measure is capturing before deciding
+# which annual drought variables should move into the mortality panel.
+# ------------------------------------------------------------------------------
+
+# -----------------------------
+# Packages and paths
+# -----------------------------
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(data.table)
+library(ggplot2)
+library(kableExtra)
+library(plotly)
+library(scales)
+library(sf)
+library(leaflet)
+library(htmltools)
+library(magrittr)
+
+# Turn off spherical geometry so Brazil shapefile operations stay predictable
+sf_use_s2(FALSE)
+
+# Monthly drought file from 01 and Brazil ADM2 boundaries for maps
+drought_root <- "/project/cil/gcp/estimation/rainfall-mortality/climate_data/ERA5-LAND/drought"
+monthly_file <- file.path(drought_root, "monthly", "era5land_admin_drought_monthly_bra.rds")
+bra_shape_file <- "/project/cil/norgay/Global_ACP/MORTALITY/Replication_2018/2_Data/Raw/Countries/BRA/Shapefile/BRA_adm2.shp"
+
+stopifnot(file.exists(monthly_file))
+
+# Windows and display periods used throughout the diagnostic
+windows <- c(1, 3, 6, 12)
+period_levels <- c("1980-1990", "1991-2010", "2011-2024")
+
+# -----------------------------
+# Read monthly drought measures
+# -----------------------------
+
+# Population-weighted monthly measures used in this diagnostic
+monthly_columns <- c(
+  "climate_country", "region_id", "unsupported_baseline_region",
+  "date_month", "year", "month_number",
+  sprintf("rain_mm_%02dm_pop", windows),
+  sprintf("percentile_%02dm_pop", windows),
+  sprintf("z_%02dm_pop", windows),
+  sprintf("deficit_mm_%02dm_pop", windows),
+  "rs_drought_12m_pop",
+  "rs_logdev_12m_pop",
+  "rs_pctdev_12m_pop"
+)
+
+monthly <- readRDS(monthly_file)
+setDT(monthly)
+
+# Main diagnostics use population-weighted measures for supported Brazil ADM2s
+monthly <- monthly[, intersect(monthly_columns, names(monthly)), with = FALSE]
+monthly <- monthly[
+  climate_country == "BRA" &
+    unsupported_baseline_region == FALSE]
+
+monthly[, date_month := as.IDate(date_month)]
+
+# Continuous month index
+monthly[, month_index := year * 12 + month_number]
+
+# Period labels are only for display tables
+monthly[
+  ,
+  Period := fcase(
+    year <= 1990, "1980-1990",
+    year <= 2010, "1991-2010",
+    default = "2011-2024"
+  )
+]
+monthly[, Period := factor(Period, levels = period_levels)]
+
+# -----------------------------
+# Selected ADM2s
+# -----------------------------
+
+# Four ADM2s with different rainfall levels, seasons, and known low-rainfall periods
+selected_places <- data.table(
+  region_id = c(
+    "BRA_032_04_0198",
+    "BRA_032_06_0669",
+    "BRA_032_17_3288",
+    "BRA_032_25_5212"
+  ),
+  Place = c(
+    "Tefe, Amazonas",
+    "Crateus, Ceara",
+    "Petrolina, Pernambuco",
+    "Sao Paulo, Sao Paulo"
+  ),
+  `Why this ADM2` = c(
+    "Amazon / high-rainfall setting, useful for seeing whether a large wet-region deficit is picked up.",
+    "Semi-arid Northeast, useful for long low-rainfall spells.",
+    "Sao Francisco valley / Northeast interior, useful for seasonal deficits.",
+    "Southeast urban setting, useful for the 2014-15 water-crisis period."
+  )
+)
+
+selected_monthly <- merge(monthly, selected_places, by = "region_id")
+selected_monthly[, Place := factor(Place, levels = selected_places$Place)]
+
+# -----------------------------
+# Table functions and plot scales
+# -----------------------------
+
+# Standard HTML table styling for small diagnostic tables
+show_table <- function(x, escape = TRUE, caption = NULL) {
+  knitr::kable(x, format = "html", align = "l", escape = escape, caption = caption) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+      full_width = FALSE
+    )
+}
+
+# Same styling, with repeated ADM2 rows grouped into readable blocks
+show_grouped_table <- function(x, group_col = "Place", escape = TRUE, caption = NULL) {
+  group_values <- as.character(x[[group_col]])
+  row_groups <- rle(group_values)
+  table_data <- as.data.frame(x)
+  table_data[[group_col]] <- NULL
+
+  knitr::kable(table_data, format = "html", align = "l", escape = escape, caption = caption) %>%
+    kable_styling(
+      bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+      full_width = FALSE
+    ) %>%
+    pack_rows(index = setNames(row_groups$lengths, row_groups$values))
+}
+
+# Shared scales keep colors comparable across figures
+pct_label <- percent_format(accuracy = 1)
+share_palette <- c("#fff5f0", "#fcbba1", "#fb6a4a", "#cb181d", "#67000d")
+rain_palette <- c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b")
+percentile_palette <- c("#67000d", "#cb181d", "#fb6a4a", "#f7f7f7", "#9ecae1", "#08519c")
+percentile_values <- rescale(c(0, 0.05, 0.10, 0.50, 0.90, 1))
+z_palette <- c("#7f0000", "#b30000", "#ef3b2c", "#fcae91", "#f7f7f7", "#bdd7e7", "#3182bd", "#08519c")
+z_values <- rescale(c(-4, -3, -2, -1, 0, 1, 2, 4), from = c(-4, 4))
+
+# -----------------------------
+# Historical events for maps
+# -----------------------------
+
+# Event months for the 6-month z-score maps
+map_events <- data.table(
+  Event = c(
+    "2012 Northeast drought",
+    "2014-15 Southeast water crisis",
+    "2023-24 Amazon drought"
+  ),
+  date_month = as.IDate(c("2012-12-01", "2015-01-01", "2023-12-01")),
+  Context = c(
+    "Long drought in Northeast and semi-arid Brazil",
+    "Water-supply crisis in Southeast Brazil, including Sao Paulo",
+    "Severe Amazon drought that later widened across Brazil"
+  )
+)
+
+# -----------------------------
+# Baseline calculations
+# -----------------------------
+
+# Mid-rank percentile: share below plus half of ties
+midrank_percentile <- function(value, baseline) {
+  baseline <- baseline[!is.na(baseline)]
+  if (is.na(value) || length(baseline) == 0) {
+    return(NA_real_)
+  }
+  (sum(baseline < value) + 0.5 * sum(baseline == value)) / length(baseline)
+}
+
+# Prior-20-year comparison for one rainfall window
+rolling20_percentile <- function(data, rain_col, keep_place = FALSE) {
+  # Place names are needed only for selected-ADM2 figures
+  keep_cols <- c("region_id", "date_month", "year", "month_number", "Period")
+  if (keep_place) {
+    keep_cols <- c(keep_cols, "Place")
+  }
+
+  out <- data[, keep_cols, with = FALSE]
+  out[, rain_mm := data[[rain_col]]]
+
+  # Same ADM2 and same ending calendar month
+  setorder(out, region_id, month_number, year)
+
+  # Initialize rolling-baseline outputs
+  out[
+    ,
+    `:=`(
+      Percentile = NA_real_,
+      baseline_mean_mm = NA_real_,
+      baseline_sd_mm = NA_real_,
+      baseline_min_mm = NA_real_
+    )
+  ]
+
+  out[
+    ,
+    c("Percentile", "baseline_mean_mm", "baseline_sd_mm", "baseline_min_mm") := {
+      pct <- rep(NA_real_, .N)
+      mean_mm <- rep(NA_real_, .N)
+      sd_mm <- rep(NA_real_, .N)
+      min_mm <- rep(NA_real_, .N)
+
+      if (.N >= 21) {
+        for (row_id in 21:.N) {
+          # Previous 20 years only; current year excluded
+          baseline <- rain_mm[(row_id - 20):(row_id - 1)]
+
+          # Require 20 calendar years, not just 20 rows
+          has_20_prior_years <- year[row_id] - year[row_id - 20] == 20
+
+          # Require all 20 prior rainfall values
+          if (!is.na(rain_mm[row_id]) && has_20_prior_years && all(!is.na(baseline))) {
+            pct[row_id] <- midrank_percentile(rain_mm[row_id], baseline)
+            mean_mm[row_id] <- mean(baseline)
+            sd_mm[row_id] <- sd(baseline)
+            min_mm[row_id] <- min(baseline)
+          }
+        }
+      }
+
+      list(pct, mean_mm, sd_mm, min_mm)
+    },
+    by = .(region_id, month_number)
+  ]
+
+  out[
+    ,
+    # Standardized relative to the prior-20-year mean and SD
+    z := fifelse(
+      !is.na(rain_mm) & !is.na(baseline_sd_mm) & baseline_sd_mm > 0,
+      (rain_mm - baseline_mean_mm) / baseline_sd_mm,
+      NA_real_
+    )
+  ]
+  # Rainfall deficit relative to the prior-20-year mean, floored at zero
+  out[, deficit_mm := fifelse(!is.na(rain_mm) & !is.na(baseline_mean_mm), pmax(0, baseline_mean_mm - rain_mm), NA_real_)]
+  out[
+    ,
+    deficit_share := fifelse(
+      !is.na(rain_mm) & !is.na(baseline_mean_mm) & baseline_mean_mm > 0,
+      pmax(0, (baseline_mean_mm - rain_mm) / baseline_mean_mm),
+      NA_real_
+    )
+  ]
+  out[
+    ,
+    # Below the minimum of the 20 prior same-calendar-month values
+    record_low := fifelse(
+      !is.na(rain_mm) & !is.na(baseline_min_mm),
+      rain_mm < baseline_min_mm,
+      NA
+    )
+  ]
+
+  out
+}
+
+# -----------------------------
+# Episode definitions
+# -----------------------------
+
+# One-month drought episodes require at least two consecutive low-rainfall months
+episode_table <- function(data, label) {
+  # Episodes use 1-month rainfall, not accumulated windows
+  episodes <- data[
+    window == 1,
+    .(
+      Place, date_month, year,
+      low = Percentile <= 0.10,
+      percentile = Percentile,
+      deficit_mm
+    )
+  ]
+  setorder(episodes, Place, date_month)
+
+  # Missing percentiles break a drought episode
+  episodes[, low := fifelse(is.na(low), FALSE, low)]
+
+  # Runs can continue across December-January
+  episodes[, run_id := rleid(low), by = Place]
+
+  out <- episodes[
+    low == TRUE,
+    .(
+      start = min(date_month),
+      end = max(date_month),
+      months = .N,
+      cross_year = min(year) != max(year),
+      cumulative_deficit_mm = sum(deficit_mm, na.rm = TRUE)
+    ),
+    by = .(Place, run_id)
+  ][
+    months >= 2
+  ]
+
+  # Some selected ADM2s may not have qualifying episodes
+  if (nrow(out) == 0) {
+    return(data.table(Note = "No episodes found with this definition."))
+  }
+
+  out[, Baseline := label]
+
+  # Longest and largest-deficit episodes first
+  out[
+    order(-months, -cumulative_deficit_mm),
+    .(
+      Baseline,
+      Place,
+      Start = format(start, "%Y-%m"),
+      End = format(end, "%Y-%m"),
+      Months = months,
+      `Crosses calendar year` = ifelse(cross_year, "Yes", "No"),
+      `Cumulative deficit, mm` = comma(round(cumulative_deficit_mm, 1))
+    )
+  ][1:min(.N, 12)]
+}
+
+# -----------------------------
+# Brazil map
+# -----------------------------
+
+# ADM2 shapefile uses the same region_id format as the drought files
+prepare_brazil_shape <- function() {
+  shape <- st_read(bra_shape_file, quiet = TRUE)
+  shape$region_id <- sprintf(
+    "BRA_%03d_%02d_%04d",
+    as.integer(shape$ID_0),
+    as.integer(shape$ID_1),
+    as.integer(shape$ID_2)
+  )
+  st_crs(shape) <- 4326
+  st_simplify(shape, dTolerance = 0.03, preserveTopology = TRUE)
+}
+
+# -----------------------------
+# Fixed-baseline comparison
+# -----------------------------
+
+# Fixed baselines are only for this comparison
+fixed_baseline_percentile <- function(data, start_year, end_year, label) {
+  # Same ADM2 and ending month, but a fixed year range
+  baseline <- data[
+    year >= start_year & year <= end_year,
+    .(baseline_values = list(rain_mm_06m_pop[!is.na(rain_mm_06m_pop)])),
+    by = .(region_id, month_number)
+  ]
+
+  out <- merge(data, baseline, by = c("region_id", "month_number"), all.x = TRUE)
+  out[
+    ,
+    `:=`(
+      Percentile = mapply(midrank_percentile, rain_mm_06m_pop, baseline_values),
+      Baseline = label
+    )
+  ]
+  out[, baseline_values := NULL]
+  out
+}
+
+# -----------------------------
+# Diagnostic datasets
+# -----------------------------
+
+# Selected places, all rainfall windows
+rolling_selected <- rbindlist(lapply(windows, function(window) {
+  # Same prior-20 rule for each window
+  rain_col <- sprintf("rain_mm_%02dm_pop", window)
+  out <- rolling20_percentile(selected_monthly, rain_col, keep_place = TRUE)
+  out[, Window := paste0(window, " month")]
+  out[, window := window]
+  out
+}))
+
+# First possible prior-20 comparison year
+rolling_selected <- rolling_selected[year >= 1980]
+rolling_selected[, Window := factor(Window, levels = paste0(c(12, 6, 3, 1), " month"))]
+
+# Full Brazil 6-month measure for event maps
+rolling_brazil_6m <- rolling20_percentile(monthly, "rain_mm_06m_pop")
+rolling_brazil_6m <- rolling_brazil_6m[year >= 1980]
+```
+
+```{css, echo=FALSE}
+/* HTML table and page layout formatting */
+
+table caption,
+.table caption {
+  caption-side: top;
+  color: #243447 !important;
+  font-size: 21px !important;
+  font-weight: 700 !important;
+  padding-top: 10px;
+  padding-bottom: 8px;
+}
+
+.table {
+  font-size: 13px;
+}
+
+.table th {
+  white-space: normal !important;
+  line-height: 1.15;
+  vertical-align: middle !important;
+}
+
+.table td {
+  vertical-align: middle !important;
+}
+
+@media (min-width: 1200px) {
+  .main-container {
+    max-width: 1180px;
+    margin-left: 310px;
+    margin-right: 40px;
+  }
+
+  #TOC {
+    position: fixed;
+    left: 24px;
+    top: 8px;
+    width: 250px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    background: #ffffff;
+    border: 1px solid #d9dee3;
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+}
+
+@media (max-width: 1199px) {
+  #TOC {
+    position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+  }
+}
+```
+
+# 1. Overview
+
+## Goal
+
+The goal is to build rainfall-based drought measures at the ADM2-month level
+and understand what each measure is capturing before choosing variables for the
+annual mortality panel.
+
+The core question is:
+
+> Was rainfall unusually low for this same place, in this same season, and over
+> this time window?
+
+I use Brazil as the pilot to look at raw rainfall patterns and work through the
+main choices: the rainfall window, the baseline, threshold choices,
+monthly-to-annual summaries, and whether known drought episodes show up in
+plausible places.
+
+What we want to get out of this is a clearer sense of the baseline, the rainfall
+window, and which annual summaries best preserve the monthly drought signal.
+
+## Selected ADM2s
+
+I use four ADM2s that cover different rainfall settings: Amazon, semi-arid
+Northeast, the Sao Francisco valley, and Sao Paulo. The point is to look closely
+at how the measures behave in places where rainfall levels and seasonality are
+very different.
+
+```{r selected-places}
+# Four ADM2s used throughout the diagnostic plots
+selected_places_table <- copy(selected_places)
+setnames(
+  selected_places_table,
+  old = c("region_id", "Place", "Why this ADM2"),
+  new = c("Region ID", "Place", "Why selected")
+)
+
+show_table(selected_places_table, caption = "Selected ADM2s")
+```
+
+# 2. Measure Construction
+
+## Monthly Measures
+
+Monthly rainfall in ADM2 \(i\), year \(y\), month \(m\) is:
+
+\[
+p_{i,y,m}.
+\]
+
+The moving rainfall total ending in that month is:
+
+\[
+A_{i,y,m,k}
+=
+\sum_{\ell = 0}^{k-1} p_{i,y,m-\ell},
+\qquad
+k \in \{1, 3, 6, 12\}.
+\]
+
+So:
+
+- 1 month: current-month rainfall.
+- 3 months: current month plus the previous 2 months.
+- 6 months: current month plus the previous 5 months.
+- 12 months: current month plus the previous 11 months.
+
+The prior-20-year baseline changes over time. For each ADM2, calendar month,
+and rainfall window, it uses the 20 years immediately before the current year.
+The current year is not included.
+
+Because Brazil starts in 1960, prior-20-year comparisons start in 1980. For
+longer rainfall windows, the first few months of 1980 can still be missing
+because the 1960 rolling totals need months before January 1960. Mortality data
+start later (1997), so the regression period has the needed rainfall history.
+
+For the prior-20-year baseline, define the comparison set as:
+
+\[
+B_{i,y,m,k}^{20}
+=
+\left\{ A_{i,s,m,k}: s = y-20,\ldots,y-1 \right\}.
+\]
+
+Let \(\mu_{i,y,m,k}^{20}\) and \(\sigma_{i,y,m,k}^{20}\) be the mean and standard
+deviation of that prior-20-year comparison set.
+
+The z-score and rainfall deficits are:
+
+\[
+z_{i,y,m,k}^{20}
+=
+\frac{A_{i,y,m,k} - \mu_{i,y,m,k}^{20}}{\sigma_{i,y,m,k}^{20}},
+\]
+
+\[
+D^{mm,20}_{i,y,m,k}
+=
+\max\left(0, \mu_{i,y,m,k}^{20} - A_{i,y,m,k}\right),
+\qquad
+D^{share,20}_{i,y,m,k}
+=
+\max\left(0, \frac{\mu_{i,y,m,k}^{20} - A_{i,y,m,k}}{\mu_{i,y,m,k}^{20}}\right).
+\]
+
+## Rocha-Soares Comparison
+
+The <a href="https://doi.org/10.1016/j.jdeveco.2014.10.003" target="_blank">Rocha
+and Soares (2015)</a> comparison is separate. It uses the same moving 12-month
+rainfall total, but compares it with fixed 1981-2010 annual rainfall for that
+ADM2:
+
+\[
+RS^{log}_{i,y,m}
+=
+\log(A_{i,y,m,12}) - \log(\bar{P}_i),
+\qquad
+RS^{pct}_{i,y,m}
+=
+100\left(\frac{A_{i,y,m,12}}{\bar{P}_i} - 1\right).
+\]
+
+Here \(\bar{P}_i\) and \(s_i\) are the 1981-2010 mean and standard deviation of
+annual rainfall for that ADM2. The Rocha-Soares threshold is:
+
+\[
+RS^{drought}_{i,y,m}
+=
+1\left\{ A_{i,y,m,12} < \bar{P}_i - s_i \right\}.
+\]
+
+(this is not SPI)
+
+```{r measure-table}
+# Monthly variables considered for the annual panel
+measure_table <- data.table(
+  `Monthly measure` = c(
+    "Rainfall total",
+    "Percentile",
+    "z-score",
+    "Below 10th percentile",
+    "Below 5th percentile",
+    "Below prior-20 minimum",
+    "Rainfall deficit, mm",
+    "Rainfall deficit, share",
+    "Rocha-Soares comparison"
+  ),
+  `What it tells us` = c(
+    "Actual rainfall over the 1, 3, 6, or 12 month window.",
+    "How unusual the rainfall total is relative to the prior 20 years for that ADM2, month, and window.",
+    "How far rainfall is from the prior-20-year mean, in prior-20-year standard deviations.",
+    "A lower-tail indicator for unusually low rainfall.",
+    "A stricter lower-tail indicator. With 20 baseline years, this is a small tail.",
+    "Rainfall below every comparable value in the previous 20 years.",
+    "Millimetres below the local prior-20-year mean, floored at zero.",
+    "The same rainfall deficit divided by the local prior-20-year mean.",
+    "Separate rolling 12-month rainfall comparison using fixed-baseline annual rainfall."
+  )
+)
+
+show_table(measure_table, caption = "Monthly drought measures")
+```
+
+# 3. Raw Monthly Rainfall
+
+## Monthly Rainfall Heatmap
+
+Raw monthly rainfall is our starting point. It has strong seasonality and a lot
+of month-to-month variation, which is why the drought measures use moving
+totals and local month-specific comparisons.
+
+```{r raw-monthly-rainfall, fig.width=9.5, fig.height=6.2}
+# Heatmap uses raw 1-month rainfall before any baseline comparison
+raw_rain <- selected_monthly[, .(Place, year, month_number, rain_mm_01m_pop)]
+raw_rain[, Month := factor(month.abb[month_number], levels = rev(month.abb))]
+
+# Tooltips keep the plot readable without labeling every tile
+raw_rain[, tooltip := paste0(
+  as.character(Place),
+  "<br>Year: ", year,
+  "<br>Month: ", Month,
+  "<br>Rainfall: ", round(rain_mm_01m_pop, 1), " mm"
+)]
+
+# Tile view makes low-rainfall seasons and isolated wet months easy to spot
+raw_rain_plot <- ggplot(
+  raw_rain,
+  aes(x = year, y = Month, fill = rain_mm_01m_pop, text = tooltip)
+) +
+  geom_tile() +
+  facet_wrap(~ Place, ncol = 1) +
+  scale_fill_gradientn(colors = rain_palette, labels = comma) +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = "mm",
+    title = "Monthly rainfall in selected ADM2s",
+    subtitle = "Actual population-weighted rainfall, before any drought threshold"
+  )
+
+ggplotly(raw_rain_plot, tooltip = "text")
+```
+
+## Monthly Rainfall Time Series
+
+The same data are shown below as a time series. We expect it to be noisy: raw
+monthly rainfall varies a lot within the year, which is why the drought measures
+compare each month to the same calendar month in earlier years.
+
+```{r raw-monthly-rainfall-line, fig.width=9.5, fig.height=6.4}
+# Same raw monthly rainfall, shown as a time series
+monthly_line <- selected_monthly[, .(Place, date_month, year, rain_mm_01m_pop)]
+monthly_line[, tooltip := paste0(
+  as.character(Place),
+  "<br>Month: ", format(date_month, "%Y-%m"),
+  "<br>Rainfall: ", round(rain_mm_01m_pop, 1), " mm"
+)]
+
+# Line view makes long low-rainfall spells easier to see than the tile view
+monthly_line_plot <- ggplot(
+  monthly_line,
+  aes(x = date_month, y = rain_mm_01m_pop, group = Place, text = tooltip)
+) +
+  geom_line(color = "#2b6c9e", linewidth = 0.28, alpha = 0.75) +
+  geom_point(color = "#2b6c9e", size = 0.35, alpha = 0.25) +
+  facet_wrap(~ Place, scales = "free_y", ncol = 1) +
+  labs(
+    x = NULL,
+    y = "Monthly rainfall, mm",
+    title = "Monthly rainfall time series",
+    subtitle = "Hover to read month-level rainfall values"
+  )
+
+ggplotly(monthly_line_plot, tooltip = "text")
+```
+
+## Annual-Scale Rainfall Time Series
+
+This plot shows 12-month rainfall totals ending in December. Red points are
+years where that December-ending 12-month total is below the prior-20-year 10th
+percentile for that ADM2.
+
+```{r december-12m-trend, fig.width=9.5, fig.height=5.6}
+# December-ending 12-month totals approximate calendar-year rainfall
+december_rain <- rolling_selected[
+  window == 12 & month_number == 12 & !is.na(rain_mm),
+  .(Place, year, rain_mm, Percentile)
+]
+
+# Mark years below the prior-20-year 10th percentile
+december_rain[, low10 := Percentile <= 0.10]
+december_rain[, tooltip := paste0(
+  as.character(Place),
+  "<br>Year: ", year,
+  "<br>12m rainfall ending Dec.: ", round(rain_mm, 1), " mm",
+  "<br>Prior-20 percentile: ", percent(Percentile, accuracy = 0.1)
+)]
+
+# Red points flag December-ending years below the local prior-20 cutoff
+december_plot <- ggplot(
+  december_rain,
+  aes(x = year, y = rain_mm, group = Place, text = tooltip)
+) +
+  geom_line(color = "#2b6c9e", linewidth = 0.95, alpha = 0.95) +
+  geom_point(color = "#2b6c9e", size = 1.1, alpha = 0.55) +
+  geom_point(
+    data = december_rain[low10 == TRUE],
+    color = "#b2182b",
+    size = 1.75,
+    alpha = 0.95
+  ) +
+  facet_wrap(~ Place, scales = "free_y", ncol = 2) +
+  labs(
+    x = NULL,
+    y = "12-month rainfall ending in December, mm",
+    title = "Annual-scale rainfall with prior-20-year low-rainfall years",
+    subtitle = "Red points are below the prior-20-year 10th percentile"
+  )
+
+ggplotly(december_plot, tooltip = "text")
+```
+
+# 4. Rainfall Windows
+
+## What The Rainfall Window Changes
+
+This holds the place fixed and changes only the rainfall window. Each vertical
+slice is the same calendar month in Petrolina, shown four ways: current month,
+last 3 months, last 6 months, and last 12 months.
+
+The 1-month measure jumps around because it only uses current-month rainfall.
+The longer windows are smoother because previous months stay inside the total.
+This is the mechanical persistence built into the drought measure.
+
+Red means the rainfall total is low relative to the prior 20 years for the same
+ADM2 and calendar month. Blue means high rainfall. White is centered at the
+median.
+
+```{r petrolina-window-tiles, fig.width=9.5, fig.height=6.8}
+focus_place <- "Petrolina, Pernambuco"
+
+# Hold place fixed and compare all four rolling rainfall windows
+petrolina_windows <- rolling_selected[Place == focus_place]
+petrolina_windows[, tooltip := paste0(
+  focus_place,
+  "<br>Month: ", format(date_month, "%Y-%m"),
+  "<br>Window: ", Window,
+  "<br>Prior-20 percentile: ", percent(Percentile, accuracy = 0.1),
+  "<br>Rainfall total: ", round(rain_mm, 1), " mm"
+)]
+
+# Same months, only the accumulation window changes
+petrolina_plot <- ggplot(
+  petrolina_windows,
+  aes(x = date_month, y = Window, fill = Percentile, text = tooltip)
+) +
+  geom_tile() +
+  scale_fill_gradientn(
+    colors = percentile_palette,
+    values = percentile_values,
+    limits = c(0, 1),
+    labels = pct_label
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = "Percentile",
+    title = "Petrolina: same months, different rainfall windows",
+    subtitle = "Prior-20-year baseline; longer windows smooth the signal"
+  )
+
+ggplotly(petrolina_plot, tooltip = "text")
+```
+
+## Six-Month Z-Score Heatmap
+
+This is still monthly, it shows the continuous 6-month z-score for each selected
+ADM2-month, before collapsing anything to annual variables. Dark red means the
+6-month rainfall total is far below the prior-20-year mean for that ADM2 and
+ending calendar month. Blue means rainfall is above that local baseline mean.
+White is centered at zero.
+
+```{r selected-6m-z-heatmap, fig.width=9.5, fig.height=7.0}
+# Six-month z-scores show continuous severity, not only threshold crossing
+z_heatmap <- rolling_selected[
+  window == 6 & year >= 1980,
+  .(Place, year, month_number, date_month, z, Percentile, rain_mm, baseline_mean_mm, deficit_mm)
+]
+z_heatmap[, Month := factor(month.abb[month_number], levels = rev(month.abb))]
+z_heatmap[, tooltip := paste0(
+  as.character(Place),
+  "<br>Month: ", format(date_month, "%Y-%m"),
+  "<br>6m z-score: ", round(z, 2),
+  "<br>6m percentile: ", percent(Percentile, accuracy = 0.1),
+  "<br>6m rainfall: ", round(rain_mm, 1), " mm",
+  "<br>Prior-20 6m mean: ", round(baseline_mean_mm, 1), " mm",
+  "<br>6m deficit: ", round(deficit_mm, 1), " mm"
+)]
+
+# Z-scores keep severity continuous instead of using only threshold cutoffs
+z_heatmap_plot <- ggplot(
+  z_heatmap,
+  aes(x = year, y = Month, fill = z, text = tooltip)
+) +
+  geom_tile() +
+  facet_wrap(~ Place, ncol = 1) +
+  scale_fill_gradientn(
+    colors = z_palette,
+    values = z_values,
+    limits = c(-4, 4),
+    oob = squish
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = "z-score",
+    title = "Selected ADM2s: 6-month z-score by month and year",
+    subtitle = "Continuous standardized rainfall deficit; no percentile filter"
+  )
+
+ggplotly(z_heatmap_plot, tooltip = "text")
+```
+
+## 1st Percentile
+
+With a prior-20-year baseline, the 5th percentile is already a very extreme
+cutoff. There are only 20 comparison years, so one prior value is 5% of the
+comparison set.
+
+For example, a July-ending 6-month rainfall total is compared with the 20
+July-ending 6-month totals from the previous 20 years. A 5th-percentile rule
+picks months where at most one of those 20 prior totals is lower.
+
+That's why I don't use a separate 1st-percentile threshold here. With 20
+comparison years, 1% is less than one observation, so not very interpretable as
+a percentile. If we want something even more extreme than the 5th percentile, I
+would define it directly as "below the prior-20 minimum" rather than call it the
+1st percentile.
+
+# 5. Baseline Choice
+
+The prior-20-year baseline is the main comparison. The fixed baselines are shown
+only to see how much the definition changes.
+
+```{r baseline-choice-table}
+# What each baseline is meant to answer
+baseline_choice_table <- data.table(
+  Baseline = c("Prior 20 years", "Fixed 1981-2010", "Fixed 1961-2010"),
+  `Question answered` = c(
+    "Was rainfall unusual relative to the recent local climate? The comparison period moves, so long-term drying can be partly absorbed.",
+    "Was rainfall unusual relative to this ADM2's 1981-2010 climate? Later years are judged against the 1981-2010 climate.",
+    "Was rainfall unusual relative to a longer fixed period? Less noisy."
+  )
+)
+
+show_table(baseline_choice_table, caption = "Baseline options used in the Brazil pilot")
+```
+
+```{r baseline-comparison-data, include=FALSE}
+# Use the same 6-month rainfall values under three baseline definitions
+baseline_input <- selected_monthly[, .(region_id, Place, date_month, year, month_number, rain_mm_06m_pop)]
+
+# Prior-20 values were already calculated in the setup chunk
+rolling20_selected_6m <- rolling_selected[
+  window == 6,
+  .(region_id, Place, date_month, year, month_number, rain_mm_06m_pop = rain_mm, Percentile)
+]
+rolling20_selected_6m[, Baseline := "Prior 20 years"]
+
+# Fixed baselines are diagnostic comparisons only
+baseline_compare <- rbindlist(list(
+  rolling20_selected_6m,
+  fixed_baseline_percentile(baseline_input, 1981, 2010, "Fixed 1981-2010"),
+  fixed_baseline_percentile(baseline_input, 1961, 2010, "Fixed 1961-2010")
+), use.names = TRUE, fill = TRUE)
+
+baseline_compare <- baseline_compare[year >= 1980]
+baseline_compare[, Baseline := factor(
+  Baseline,
+  levels = c("Prior 20 years", "Fixed 1981-2010", "Fixed 1961-2010")
+)]
+```
+
+## Selected ADM2 Baseline Comparison
+
+`Usable months` is the number of 1980-2024 ADM2-months where the 6-month measure
+can be calculated. The fixed baselines cover all 540 months. The prior-20-year
+baseline has 535 because January-May 1980 do not yet have 20 complete prior
+years for the 6-month window.
+
+```{r baseline-summary-table}
+# Count low-rainfall months within each baseline definition
+baseline_summary <- baseline_compare[
+  ,
+  .(
+    `Months below 10th pct.` = sum(Percentile <= 0.10, na.rm = TRUE),
+    `Months below 5th pct.` = sum(Percentile <= 0.05, na.rm = TRUE),
+    `Usable months` = sum(!is.na(Percentile))
+  ),
+  by = .(Place, Baseline)
+]
+
+# Shares use usable months so the prior-20 startup period is not counted
+baseline_summary[, `:=`(
+  `Below 10th pct. share` = percent(`Months below 10th pct.` / `Usable months`, accuracy = 0.1),
+  `Below 5th pct. share` = percent(`Months below 5th pct.` / `Usable months`, accuracy = 0.1),
+  `Usable months` = comma(`Usable months`)
+)]
+setorder(baseline_summary, Place, Baseline)
+
+# Display names make the baseline comparison table easier to read
+baseline_summary_display <- copy(baseline_summary)
+setnames(
+  baseline_summary_display,
+  old = c(
+    "Months below 10th pct.",
+    "Months below 5th pct.",
+    "Usable months",
+    "Below 10th pct. share",
+    "Below 5th pct. share"
+  ),
+  new = c(
+    "6-month total<br>months below<br>10th pct.",
+    "6-month total<br>months below<br>5th pct.",
+    "Usable<br>months",
+    "Share of usable months<br>below 10th pct.",
+    "Share of usable months<br>below 5th pct."
+  )
+)
+
+show_grouped_table(
+  baseline_summary_display,
+  escape = FALSE,
+  caption = "Selected ADM2s: how the 6-month low-rainfall count changes by baseline"
+)
+```
+
+```{r baseline-comparison-plot, fig.width=9.5, fig.height=6.0}
+# Annual count of low 6-month ending points, by baseline choice
+baseline_year <- baseline_compare[
+  ,
+  .(`Months below 10th pct.` = sum(Percentile <= 0.10, na.rm = TRUE)),
+  by = .(Place, year, Baseline)
+]
+baseline_year[, tooltip := paste0(
+  as.character(Place),
+  "<br>Year: ", year,
+  "<br>Baseline: ", Baseline,
+  "<br>6-month ending months below 10th pct.: ", `Months below 10th pct.`
+)]
+
+# Compare baseline choices using the same annual count
+baseline_plot <- ggplot(
+  baseline_year,
+  aes(x = year, y = `Months below 10th pct.`, color = Baseline, group = Baseline, text = tooltip)
+) +
+  geom_line(linewidth = 0.85, alpha = 0.95) +
+  geom_point(size = 1.0, alpha = 0.75) +
+  facet_wrap(~ Place, ncol = 2) +
+  scale_y_continuous(breaks = seq(0, 12, by = 3), limits = c(0, 12)) +
+  scale_color_manual(values = c(
+    "Prior 20 years" = "#2166ac",
+    "Fixed 1981-2010" = "#b2182b",
+    "Fixed 1961-2010" = "#ef8a62"
+  )) +
+  labs(
+    x = NULL,
+    y = "6-month ending months below 10th pct.",
+    color = NULL,
+    title = "How much does the baseline choice change the 6-month measure?",
+    subtitle = "Selected ADM2s, population-weighted rainfall"
+  )
+
+ggplotly(baseline_plot, tooltip = "text")
+```
+
+The baseline choice changes the level of the 6-month low-rainfall count in some
+years, but the main spikes tend to line up. That is reassuring: it means the
+largest events are not just artifacts of one baseline choice. The baseline still
+matters for years closer to the 10th-percentile cutoff.
+
+# 6. Episodes From One-Month Rainfall
+
+I construct episode measures only for the 1-month time window. The 1-month
+measure tells us whether a specific month had unusually low rainfall, so I add a
+consecutive-month rule to avoid calling one isolated month an episode.
+
+For the 3-, 6-, and 12-month measures, persistence is already built into the
+moving rainfall total. A 6-month value below the threshold already means the
+previous 6 months were low as a bundle, so I do not add another episode rule
+on top of it here.
+
+In this table, an episode means at least two consecutive 1-month observations
+below the 10th percentile.
+
+```{r selected-episodes}
+# One-month low-rainfall spells; at least two months required inside episode_table()
+episodes_10 <- episode_table(rolling_selected, "Prior 20 years")
+
+# Add line breaks only when the table has episode rows
+if (!"Note" %in% names(episodes_10)) {
+  setnames(
+    episodes_10,
+    old = c("Months", "Crosses calendar year", "Cumulative deficit, mm"),
+    new = c(
+      "Episode length<br>months",
+      "Crosses<br>calendar year",
+      "Cumulative 1-month<br>rainfall deficit<br>mm"
+    )
+  )
+}
+
+show_table(episodes_10, escape = FALSE, caption = "One-month rainfall episodes below the 10th percentile")
+```
+
+## Severe ADM2-Months
+
+Threshold counts are useful, but they don't say how far below normal rainfall
+was. This table shows the most negative 6-month z-score observations for each
+selected ADM2.
+
+```{r severity-measures-table}
+# Pick the three most negative 6-month z-score months per selected ADM2
+severity_examples <- rolling_selected[
+  window == 6 & year >= 1980 & !is.na(z),
+  .SD[order(z)][1:min(.N, 3)],
+  by = Place
+]
+setorder(severity_examples, Place, z)
+
+# Same ADM2-months under the Rocha-Soares comparison
+severity_examples <- merge(
+  severity_examples,
+  selected_monthly[, .(Place, date_month, rs_drought_12m_pop, rs_pctdev_12m_pop)],
+  by = c("Place", "date_month"),
+  all.x = TRUE
+)
+
+# Put continuous severity, rainfall deficit, and RS status side by side
+severity_table <- severity_examples[
+  ,
+  .(
+    Place = as.character(Place),
+    Year = year,
+    Month = format(date_month, "%Y-%m"),
+    `6-month total<br>percentile` = percent(Percentile, accuracy = 0.1),
+    `6-month total<br>z-score` = round(z, 2),
+    `6-month rainfall<br>mm` = comma(round(rain_mm, 1)),
+    `Prior-20 mean<br>6-month rainfall<br>mm` = comma(round(baseline_mean_mm, 1)),
+    `6-month rainfall<br>deficit<br>mm` = comma(round(deficit_mm, 1)),
+    `6-month rainfall<br>deficit share` = percent(deficit_share, accuracy = 0.1),
+    `6-month total<br>below all prior<br>20 values` = ifelse(record_low == TRUE, "Yes", "No"),
+    `Rocha-Soares<br>threshold` = ifelse(rs_drought_12m_pop == 1, "Yes", "No"),
+    `Rocha-Soares<br>pct. deviation` = percent(rs_pctdev_12m_pop / 100, accuracy = 0.1)
+  )
+]
+
+show_grouped_table(
+  severity_table,
+  escape = FALSE,
+  caption = "Selected severe ADM2-months"
+)
+```
+
+## Agreement Across Time Windows
+
+This table checks whether the longer windows are mostly repeating the 1-month
+measure or adding a different signal. The first four columns show how often
+each window falls below the 10th percentile. The last two columns show cases
+where the accumulated rainfall window is unusually low even though the current
+month alone is not below the threshold.
+
+Those last columns are useful because they show why accumulated rainfall
+measures matter. A current month can look normal while the previous 6 or 12
+months are still unusually low.
+
+```{r window-agreement-table}
+# Put each rainfall window side by side for the same ADM2-month
+agreement_data <- dcast(
+  rolling_selected[, .(Place, date_month, year, Window, Percentile)],
+  Place + date_month + year ~ Window,
+  value.var = "Percentile"
+)
+
+# Keep months where all four windows are available
+agreement_data <- agreement_data[complete.cases(agreement_data)]
+
+# Longer windows can be below the threshold even when the current month is not
+agreement_table <- agreement_data[
+  ,
+  .(
+    `Share of months<br>1-month rainfall<br>below 10th pct.` = percent(mean(`1 month` <= 0.10), accuracy = 0.1),
+    `Share of months<br>3-month total<br>below 10th pct.` = percent(mean(`3 month` <= 0.10), accuracy = 0.1),
+    `Share of months<br>6-month total<br>below 10th pct.` = percent(mean(`6 month` <= 0.10), accuracy = 0.1),
+    `Share of months<br>12-month total<br>below 10th pct.` = percent(mean(`12 month` <= 0.10), accuracy = 0.1),
+    `6-month total below<br>10th pct., but<br>current month not below` = percent(mean(`6 month` <= 0.10 & `1 month` > 0.10), accuracy = 0.1),
+    `12-month total below<br>10th pct., but<br>current month not below` = percent(mean(`12 month` <= 0.10 & `1 month` > 0.10), accuracy = 0.1)
+  ),
+  by = Place
+]
+
+show_table(agreement_table, escape = FALSE, caption = "Agreement across rainfall windows")
+```
+
+# 7. From Monthly To Annual
+
+The main question for this pilot is how much of the monthly drought signal we
+can preserve when we turn the ADM2-month measures into ADM2-year variables for
+the mortality panel.
+
+The table below lays out the annual summaries we are considering. Some are about
+duration, some are about severity, and some are simple annual rainfall
+comparisons.
+
+```{r annual-measure-table}
+# Annual variables considered for the mortality panel
+annual_measure_table <- data.table(
+  `Annual summary` = c(
+    "Duration count",
+    "z-score severity",
+    "Worst z-score",
+    "Worst percentile / below prior-20 minimum",
+    "Rainfall deficit",
+    "-log annual rainfall GS (QJE)",
+    "Rocha-Soares threshold count",
+    "Worst Rocha-Soares deviation"
+  ),
+  `What it means` = c(
+    "How many monthly ending points crossed the low-rainfall threshold.",
+    "For 1-month rainfall, adds up below-normal monthly z-scores in the year.",
+    "The most negative standardized rainfall value reached that year.",
+    "The lowest historical rank reached that year, plus whether rainfall fell below the prior-20 minimum.",
+    "Missing rainfall in millimetres relative to the local baseline mean.",
+    "A simple annual rainfall measure: lower annual rainfall gives a larger value.",
+    "How many ending months were below the Rocha-Soares threshold?",
+    "How far below normal was the worst rolling 12-month value?"
+  )
+)
+
+show_table(annual_measure_table, caption = "Annual summaries we can build from monthly measures")
+```
+
+This follows the same broad logic as the drought-index papers: once monthly
+low-rainfall periods are identified, the annual panel can keep both duration
+and severity. Duration counts how long the low-rainfall signal lasted. Severity
+uses z-scores and deficits to keep information on how far below normal rainfall
+was.
+
+I also include a simple annual rainfall measure from
+<a href="https://doi.org/10.1093/qje/qjag005" target="_blank">Gehring and
+Schaudt (2026)</a>: annual rainfall in logs, multiplied by negative one. So not
+a drought index, but a simple annual rainfall benchmark we can compare against
+the other drought measures.
+
+For z-score sums, I use the 1-month measure. That keeps the annual sum easy to
+read: it adds monthly standardized deficits inside the calendar year. For the
+3-, 6-, and 12-month windows, nearby ending months reuse much of the same
+rainfall, so I keep the worst z-score instead of summing them.
+
+The unfiltered 1-month version only looks at rainfall deficits. It adds up
+every negative z-score in the year.
+
+\[
+\text{1m z severity}_{i,y}
+=
+\sum_{m \in y} \max(0, -z_{i,y,m,1})
+\]
+
+\[
+\text{below-10 1m z severity}_{i,y}
+=
+\sum_{m \in y} 1\{pct_{i,y,m,1} \le 0.10\} \max(0, -z_{i,y,m,1})
+\]
+
+The second version focuses only on months that qualify as low rainfall.
+
+```{r annual-summary-data, include=FALSE}
+# Annual summaries use the ending month's calendar year
+annual_window_summary <- rolling_selected[
+  year >= 1980,
+  {
+    # Require all 12 monthly values before making annual summaries
+    complete_year <- sum(!is.na(Percentile)) == 12
+    if (complete_year) {
+      list(
+        # Number of monthly ending points below each threshold
+        n_low10 = as.integer(sum(Percentile <= 0.10, na.rm = TRUE)),
+        n_low5 = as.integer(sum(Percentile <= 0.05, na.rm = TRUE)),
+        # Sum below-normal z-scores; positive z-scores count as zero
+        z_severity_all = sum(pmax(0, -z), na.rm = TRUE),
+        # Same severity sum, restricted to below-10th-percentile months
+        z_severity_low10 = sum(pmax(0, -z)[Percentile <= 0.10], na.rm = TRUE),
+        # Worst point reached during the calendar year
+        worst_z = min(z, na.rm = TRUE),
+        worst_pct = min(Percentile, na.rm = TRUE),
+        # Largest and cumulative rainfall deficits
+        max_deficit_mm = max(deficit_mm, na.rm = TRUE),
+        cum_deficit_all_mm = sum(deficit_mm, na.rm = TRUE),
+        cum_deficit_low10_mm = sum(deficit_mm[Percentile <= 0.10], na.rm = TRUE),
+        # Below the minimum value in the prior-20-year comparison set
+        record_low_months = as.integer(sum(record_low == TRUE, na.rm = TRUE))
+      )
+    } else {
+      list(
+        n_low10 = NA_integer_,
+        n_low5 = NA_integer_,
+        z_severity_all = NA_real_,
+        z_severity_low10 = NA_real_,
+        worst_z = NA_real_,
+        worst_pct = NA_real_,
+        max_deficit_mm = NA_real_,
+        cum_deficit_all_mm = NA_real_,
+        cum_deficit_low10_mm = NA_real_,
+        record_low_months = NA_integer_
+      )
+    }
+  },
+  by = .(Place, year, window)
+]
+annual_window_summary[, window_label := paste0(window, "m")]
+
+# Show severe years without making the tables huge
+top_annual_years <- annual_window_summary[
+  window == 6 & !is.na(worst_z)
+][
+  order(Place, worst_z),
+  .SD[1:min(.N, 4)],
+  by = Place
+][, .(Place, year)]
+```
+
+## Annual Candidate Measure Tables
+
+The tables below focus on four years for each selected ADM2: the years with the
+worst 6-month z-score. This keeps the table readable and lets us compare
+candidate annual measures in years that look severe for each place.
+
+Percentiles are still useful for defining thresholds. But with a prior-20-year
+baseline, the worst percentile often becomes 0: it just means rainfall was below
+all 20 comparable prior values. Once we are in that tail, z-scores and rainfall
+deficits carry more information about severity.
+
+In the first table, each value is a count out of 12 monthly rows in that year.
+For 6- and 12-month measures, the month is the ending month of the rainfall
+window.
+
+```{r annual-candidate-table}
+# Duration counts by window and drought threshold
+annual_duration <- dcast(
+  annual_window_summary,
+  Place + year ~ window_label,
+  value.var = c("n_low10", "n_low5")
+)
+
+# Human-readable column names for the duration table
+setnames(
+  annual_duration,
+  old = c("n_low10_1m", "n_low10_3m", "n_low10_6m", "n_low10_12m",
+          "n_low5_1m", "n_low5_3m", "n_low5_6m", "n_low5_12m"),
+  new = c("1m low10", "3m low10", "6m low10", "12m low10",
+          "1m low5", "3m low5", "6m low5", "12m low5")
+)
+
+# Keep only the selected severe years
+annual_duration <- merge(top_annual_years, annual_duration, by = c("Place", "year"))
+setorder(annual_duration, Place, year)
+setnames(annual_duration, "year", "Year")
+
+annual_duration_display <- copy(annual_duration)
+setnames(
+  annual_duration_display,
+  old = c(
+    "1m low10", "3m low10", "6m low10", "12m low10",
+    "1m low5", "3m low5", "6m low5", "12m low5"
+  ),
+  new = c(
+    "1-month rainfall<br>ending months below<br>10th pct.",
+    "3-month total<br>ending months below<br>10th pct.",
+    "6-month total<br>ending months below<br>10th pct.",
+    "12-month total<br>ending months below<br>10th pct.",
+    "1-month rainfall<br>ending months below<br>5th pct.",
+    "3-month total<br>ending months below<br>5th pct.",
+    "6-month total<br>ending months below<br>5th pct.",
+    "12-month total<br>ending months below<br>5th pct."
+  )
+)
+
+# Duration table compares how often each window crosses each cutoff
+show_grouped_table(
+  annual_duration_display[
+    ,
+    .(
+      Place, Year,
+      `1-month rainfall<br>ending months below<br>10th pct.`,
+      `3-month total<br>ending months below<br>10th pct.`,
+      `6-month total<br>ending months below<br>10th pct.`,
+      `12-month total<br>ending months below<br>10th pct.`,
+      `1-month rainfall<br>ending months below<br>5th pct.`,
+      `3-month total<br>ending months below<br>5th pct.`,
+      `6-month total<br>ending months below<br>5th pct.`,
+      `12-month total<br>ending months below<br>5th pct.`
+    )
+  ],
+  escape = FALSE,
+  caption = "Annual duration candidate measures: number of monthly ending points below each threshold"
+)
+```
+
+This table is mainly about duration. The 1-month columns count individual
+low-rainfall months. The 3-, 6-, and 12-month columns count low accumulated
+windows ending in that year.
+
+One thing to notice: a year can look severe under the 6-month measure without
+crossing the 12-month threshold. This is not necessarily a contradiction. A bad
+half-year can be partly offset by wetter months elsewhere in the 12-month
+window.
+
+```{r annual-severity-table}
+# Calendar-year rainfall benchmark from raw 1-month rainfall
+annual_rain <- selected_monthly[
+  year >= 1980,
+  .(
+    annual_rain_mm = if (sum(!is.na(rain_mm_01m_pop)) == 12) {
+      sum(rain_mm_01m_pop, na.rm = TRUE)
+    } else {
+      NA_real_
+    }
+  ),
+  by = .(Place, year)
+]
+annual_rain[, `-log(annual rainfall) (QJE)` := -log(annual_rain_mm)]
+
+# One-month summaries preserve within-year monthly deficits
+annual_1m <- annual_window_summary[
+  window == 1,
+  .(
+    Place, year,
+    `1m z severity` = z_severity_all,
+    `1m low10 z severity` = z_severity_low10,
+    `1m cumulative deficit, mm` = cum_deficit_all_mm,
+    `1m low10 cumulative deficit, mm` = cum_deficit_low10_mm
+  )
+]
+
+# Six-month summaries emphasize the worst accumulated spell in the year
+annual_6m <- annual_window_summary[
+  window == 6,
+  .(
+    Place, year,
+    `Worst 6m z-score` = worst_z,
+    `6m max deficit, mm` = max_deficit_mm,
+    `6m below prior-20 min months` = record_low_months
+  )
+]
+
+# Twelve-month deficit is an annual-scale accumulated rainfall shortfall
+annual_12m <- annual_window_summary[window == 12, .(Place, year, `12m max deficit, mm` = max_deficit_mm)]
+
+# Rocha-Soares variables are already monthly rolling-12-month measures
+annual_rs <- selected_monthly[
+  year >= 1980,
+  .(
+    `RS threshold months` = if (sum(!is.na(rs_drought_12m_pop)) == 12) {
+      sum(rs_drought_12m_pop == 1, na.rm = TRUE)
+    } else {
+      NA_integer_
+    },
+    `Worst RS pct deviation` = if (all(is.na(rs_pctdev_12m_pop))) {
+      NA_real_
+    } else {
+      min(rs_pctdev_12m_pop, na.rm = TRUE)
+    }
+  ),
+  by = .(Place, year)
+]
+
+# Candidate annual measures for the same ADM2-years
+annual_severity <- Reduce(
+  function(x, y) merge(x, y, by = c("Place", "year"), all.x = TRUE),
+  list(top_annual_years, annual_1m, annual_6m, annual_12m, annual_rain, annual_rs)
+)
+setorder(annual_severity, Place, year)
+
+annual_severity[
+  ,
+  # Format only after numeric summaries are joined
+  `:=`(
+    `1m z severity` = round(`1m z severity`, 2),
+    `1m low10 z severity` = round(`1m low10 z severity`, 2),
+    `1m cumulative deficit, mm` = comma(round(`1m cumulative deficit, mm`, 1)),
+    `1m low10 cumulative deficit, mm` = comma(round(`1m low10 cumulative deficit, mm`, 1)),
+    `Worst 6m z-score` = round(`Worst 6m z-score`, 2),
+    `6m max deficit, mm` = comma(round(`6m max deficit, mm`, 1)),
+    `12m max deficit, mm` = comma(round(`12m max deficit, mm`, 1)),
+    `-log(annual rainfall) (QJE)` = round(`-log(annual rainfall) (QJE)`, 3),
+    `Worst RS pct deviation` = percent(`Worst RS pct deviation` / 100, accuracy = 0.1)
+  )
+]
+setnames(annual_severity, "year", "Year")
+
+# Reader-facing names for candidate annual drought measures
+annual_severity_display <- copy(annual_severity)
+setnames(
+  annual_severity_display,
+  old = c(
+    "1m z severity",
+    "1m low10 z severity",
+    "1m cumulative deficit, mm",
+    "1m low10 cumulative deficit, mm",
+    "Worst 6m z-score",
+    "6m max deficit, mm",
+    "12m max deficit, mm",
+    "6m below prior-20 min months",
+    "-log(annual rainfall) (QJE)",
+    "RS threshold months",
+    "Worst RS pct deviation"
+  ),
+  new = c(
+    "1-month rainfall<br>sum of below-normal<br>z-scores",
+    "1-month rainfall<br>sum below-normal z-scores<br>below 10th pct.",
+    "1-month rainfall<br>cumulative deficit<br>mm",
+    "1-month rainfall<br>cumulative deficit<br>below 10th pct.<br>mm",
+    "Worst 6-month<br>z-score",
+    "Largest 6-month<br>rainfall deficit<br>mm",
+    "Largest 12-month<br>rainfall deficit<br>mm",
+    "6-month total<br>below prior-20 min<br>ending months",
+    "-log annual rainfall<br>GS (QJE)",
+    "Rocha-Soares<br>threshold months",
+    "Worst Rocha-Soares<br>pct. deviation"
+  )
+)
+
+# Keep the main annual candidates together for the selected severe years
+show_grouped_table(
+  annual_severity_display[
+    ,
+    .(
+      Place, Year,
+      `1-month rainfall<br>sum of below-normal<br>z-scores`,
+      `1-month rainfall<br>sum below-normal z-scores<br>below 10th pct.`,
+      `1-month rainfall<br>cumulative deficit<br>mm`,
+      `1-month rainfall<br>cumulative deficit<br>below 10th pct.<br>mm`,
+      `Worst 6-month<br>z-score`,
+      `Largest 6-month<br>rainfall deficit<br>mm`,
+      `Largest 12-month<br>rainfall deficit<br>mm`,
+      `6-month total<br>below prior-20 min<br>ending months`,
+      `-log annual rainfall<br>GS (QJE)`,
+      `Rocha-Soares<br>threshold months`,
+      `Worst Rocha-Soares<br>pct. deviation`
+    )
+  ],
+  escape = FALSE,
+  caption = "Annual severity and comparison candidate measures for the same selected ADM2-years"
+)
+```
+
+This table compares the severity measures we could carry into the annual panel.
+The 1-month columns summarize deficits within the calendar year. The 6- and
+12-month columns keep the worst rolling-window values, instead of summing
+overlapping rolling windows. The last two columns show how the same years look
+under -log annual rainfall GS (QJE) and Rocha-Soares.
+
+One thing to notice: the largest 6-month deficit can be bigger than the largest
+12-month deficit. That can happen because each deficit is compared with its own
+baseline for that window. A very bad 6-month spell can still sit inside a less
+extreme 12-month total.
+
+## Annual Baseline Comparison
+
+This table takes one possible annual measure, the number of 6-month ending
+months below the 10th percentile, and recalculates it under each baseline. It is
+asking whether the annual exposure changes when we change the comparison period.
+
+```{r annual-baseline-summary-table}
+# Recalculate one annual duration measure under each baseline definition
+baseline_annual_summary <- baseline_compare[
+  ,
+  .(`Months below 10th pct.` = sum(Percentile <= 0.10, na.rm = TRUE)),
+  by = .(Place, Baseline, year)
+][
+  ,
+  .(
+    # How much annual exposure the baseline creates
+    `Mean months per year` = round(mean(`Months below 10th pct.`, na.rm = TRUE), 2),
+    `Years with any 6m low-rainfall month` = percent(mean(`Months below 10th pct.` > 0, na.rm = TRUE), accuracy = 0.1),
+    `Years with 3+ 6m low-rainfall months` = percent(mean(`Months below 10th pct.` >= 3, na.rm = TRUE), accuracy = 0.1),
+    # Which year gets the largest count under each baseline
+    `Highest-count year` = year[which.max(`Months below 10th pct.`)],
+    `Max months in a year` = max(`Months below 10th pct.`, na.rm = TRUE)
+  ),
+  by = .(Place, Baseline)
+]
+setorder(baseline_annual_summary, Place, Baseline)
+
+# Shorter labels for the table
+baseline_annual_summary_display <- copy(baseline_annual_summary)
+setnames(
+  baseline_annual_summary_display,
+  old = c(
+    "Mean months per year",
+    "Years with any 6m low-rainfall month",
+    "Years with 3+ 6m low-rainfall months",
+    "Highest-count year",
+    "Max months in a year"
+  ),
+  new = c(
+    "Mean 6-month ending<br>months below 10th pct.<br>per year",
+    "Years with any<br>6-month ending month<br>below 10th pct.",
+    "Years with 3+<br>6-month ending months<br>below 10th pct.",
+    "Highest-count<br>year",
+    "Max ending months<br>below 10th pct.<br>in a year"
+  )
+)
+
+show_grouped_table(
+  baseline_annual_summary_display,
+  escape = FALSE,
+  caption = "Selected ADM2s: annual 6-month low-rainfall summaries by baseline"
+)
+```
+
+The main takeaway is that the baseline choice changes the amount of annual
+exposure, but the biggest years often still line up. Tefe and Sao Paulo look
+much less frequently below the 10th percentile under the fixed 1961-2010
+baseline, while Petrolina is fairly stable. So baseline choice matters, even if
+some of the main event years are the same.
+
+# 8. Takeaways And Questions
+
+## Where This Leaves Us
+
+Hopefully, this gives a clearer picture of the various measures, and can help
+decide which drought variables should move forward.
+
+The remaining decisions are:
+
+1. Baseline: are we settled on the prior-20-year baseline as the main version?
+2. Thresholds: use 10th percentile only, or also keep 5th percentile as a severe cutoff?
+3. Time window: emphasize 3-, 6-, or 12-month rolling rainfall for the main annual exposure?
+4. Annual summaries: duration counts, worst z-score, largest rainfall deficit, 1-month cumulative deficit, episodes, annual rainfall benchmarks?
+5. Simple annual measures: should Rocha-Soares and -log annual rainfall GS (QJE) be kept as comparison measures, or should they also be included as candidate regression variables?
+
+# Appendix: Historical Events And Maps
+
+## Historical Brazil Episodes
+
+The point is to check whether the 6-month measure picks up known Brazil drought
+episodes in plausible places.
+
+Concretely, I use these events to ask: do known events show up as unusually low
+rainfall? Do they show up in the regions where we expect them? Does the z-score
+map help distinguish local severity from national extent? Are there cases where
+the measure looks too broad, too narrow, or concentrated somewhere unexpected?
+
+```{r historical-event-table}
+# Events used as qualitative checks against known drought history
+historical_events <- data.table(
+  Event = c(
+    "2005 Amazon drought",
+    "2010 Amazon drought",
+    "2012-17 Northeast drought",
+    "2014-15 Southeast water crisis",
+    "2023-24 Amazon drought"
+  ),
+  `Main region` = c(
+    "Amazon basin, especially the southwest",
+    "Amazon basin",
+    "Northeast and semi-arid Brazil",
+    "Southeast Brazil, including Sao Paulo and Cantareira",
+    "North/Amazon, later widening across Brazil"
+  ),
+  `Check period` = c(
+    "2005-07 to 2005-10",
+    "2010-07 to 2010-10",
+    "2012-01 to 2017-12",
+    "2013-10 to 2015-04",
+    "2023-07 to 2024-05"
+  ),
+  `Why included` = c(
+    "Major Amazon drought with strong impacts on river levels, forests, fire risk, and transport in parts of the basin.",
+    "Widespread Amazon drought, included so the Amazon comparison is not based only on 2005.",
+    "Long multi-year drought in the Northeast and semi-arid interior, with persistent water-supply and agricultural stress.",
+    "Southeast water crisis centered on Sao Paulo/Cantareira, with strong pressure on reservoirs and urban water supply.",
+    "Recent severe Amazon drought, with very low river levels and broader low-rainfall conditions in 2023-24."
+  )
+)
+
+show_table(historical_events, caption = "Historical Brazil drought episodes used as reference points")
+```
+
+## Event Maps
+
+The maps show selected event months for the 6-month measure. The point is to see
+whether unusually low rainfall shows up in the expected regions, and whether the
+event looks regional or more widespread.
+
+Color shows the continuous 6-month z-score relative to the prior-20-year
+baseline. Dark red means unusually low rainfall and blue means unusually high
+rainfall. Dark outlines mark ADM2s below the 10th percentile.
+
+```{r brazil-spatial-check, fig.width=9.5, fig.height=6.8}
+if (file.exists(bra_shape_file)) {
+  bra_shape <- prepare_brazil_shape()
+
+  # Map scale is fixed across events for visual comparison
+  z_pal <- colorNumeric(palette = z_palette, domain = c(-6, 3), na.color = "#d9d9d9")
+  leaflet_map <- leaflet(options = leafletOptions(preferCanvas = TRUE)) %>%
+    addProviderTiles(providers$Esri.WorldGrayCanvas)
+
+  map_groups <- character(0)
+
+  for (row_id in seq_len(nrow(map_events))) {
+    event <- map_events[row_id]
+    group_name <- paste0(event$Event, ": ", format(event$date_month, "%Y-%m"))
+    map_groups <- c(map_groups, group_name)
+
+    # 6-month value ending in the event month
+    map_data <- rolling_brazil_6m[
+      date_month == event$date_month,
+      .(region_id, Percentile, z, rain_mm, baseline_mean_mm, deficit_mm, record_low)
+    ]
+
+    map_shape <- merge(bra_shape, map_data, by = "region_id", all.x = TRUE)
+
+    # Cap z-scores for the map scale only
+    map_shape$z_map <- pmax(pmin(map_shape$z, 3), -6)
+
+    # Dark outlines mark ADM2s below the 10th percentile
+    map_shape$outline_color <- fifelse(
+      !is.na(map_shape$Percentile) & map_shape$Percentile <= 0.10,
+      "#4a0000",
+      "#ffffff"
+    )
+    map_shape$outline_weight <- fifelse(
+      !is.na(map_shape$Percentile) & map_shape$Percentile <= 0.10,
+      0.9,
+      0.15
+    )
+
+    # Popup keeps the main drought quantities together
+    map_shape$popup_text <- paste0(
+      "<b>", map_shape$NAME_2, "</b><br>",
+      map_shape$NAME_1,
+      "<br><b>Region:</b> ", map_shape$region_id,
+      "<br><b>Event:</b> ", event$Event,
+      "<br><b>6m percentile:</b> ", percent(map_shape$Percentile, accuracy = 0.1),
+      "<br><b>6m z-score:</b> ", round(map_shape$z, 2),
+      "<br><b>6m rainfall:</b> ", round(map_shape$rain_mm, 1), " mm",
+      "<br><b>Prior-20 6m mean:</b> ", round(map_shape$baseline_mean_mm, 1), " mm",
+      "<br><b>6m deficit:</b> ", round(map_shape$deficit_mm, 1), " mm",
+      "<br><b>Below prior-20 minimum:</b> ",
+      ifelse(
+        is.na(map_shape$record_low),
+        "Not available",
+        ifelse(map_shape$record_low, "Yes", "No")
+      )
+    )
+
+    # One layer per event month
+    leaflet_map <- leaflet_map %>%
+      addPolygons(
+        data = map_shape,
+        group = group_name,
+        fillColor = ~z_pal(z_map),
+        fillOpacity = 0.78,
+        color = ~outline_color,
+        weight = ~outline_weight,
+        smoothFactor = 0.4,
+        popup = ~popup_text
+      )
+  }
+
+  # Show the first event by default and keep the others in the layer menu
+  leaflet_map <- leaflet_map %>%
+    addLegend(
+      position = "bottomright",
+      pal = z_pal,
+      values = c(-6, 3),
+      title = "6m z-score",
+      opacity = 0.8
+    ) %>%
+    addLayersControl(
+      baseGroups = map_groups,
+      options = layersControlOptions(collapsed = FALSE)
+    )
+
+  if (length(map_groups) > 1) {
+    leaflet_map <- hideGroup(leaflet_map, map_groups[-1])
+  }
+
+  leaflet_map
+} else {
+  tags$p("Brazil shapefile not found.")
+}
+```
