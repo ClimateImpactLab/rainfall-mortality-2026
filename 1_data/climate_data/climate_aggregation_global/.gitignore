@@ -1,0 +1,8 @@
+logs/
+*/logs/
+__pycache__/
+*.pyc
+
+seb_scripts_template/
+usa_pilot/
+CLEANUP_NOTES.md
