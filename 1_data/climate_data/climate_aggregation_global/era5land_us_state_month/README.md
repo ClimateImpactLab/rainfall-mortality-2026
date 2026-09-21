@@ -7,7 +7,8 @@ These files are used for our tropical cyclone confounding check. The state
 shapefile comes from the Young-Hsiang/Census 2016 data. Wind is ERA5-Land
 all-weather daily maximum wind, not tropical-cyclone-only wind.
 
-The heavy raster and NetCDF steps are run through the sbatch files in `jobs/`.
+The heavy raster and NetCDF steps are run through the sbatch files in
+[jobs/](jobs/).
 
 ## Inputs
 
@@ -83,10 +84,10 @@ jobs/
 ```
 
 The Python scripts reuse the ERA5-Land grid reader and CSV/check helpers from
-`era5land_admin/common.py`.
+[era5land_admin/common.py](../era5land_admin/common.py).
 
-`jobs/` contains the sbatch files used to run the heavy steps on RCC. See
-the notes below.
+[jobs/](jobs/) contains the sbatch files used to run the heavy steps on RCC.
+See the notes below.
 
 ## Scripts
 
@@ -205,7 +206,7 @@ Pass `--overwrite` only when replacing existing outputs.
 
 ## Slurm Jobs
 
-The sbatch files in `jobs/` cover the three heavy steps:
+The sbatch files in [jobs/](jobs/) cover the three heavy steps:
 
 ```text
 jobs/01_state_weights.sbatch
@@ -213,11 +214,14 @@ jobs/02_state_month_wind.sbatch
 jobs/03_state_month_precip.sbatch
 ```
 
-`01_state_weights.sbatch` builds the fixed U.S. state-to-ERA5-Land-cell weights.
-Run it once unless the geography, grid, or weight inputs change.
+[01_state_weights.sbatch](jobs/01_state_weights.sbatch) builds the fixed U.S.
+state-to-ERA5-Land-cell weights. Run it once unless the geography, grid, or
+weight inputs change.
 
-`02_state_month_wind.sbatch` and `03_state_month_precip.sbatch` are year arrays.
-Each task reads one annual daily NetCDF file and writes one state-month CSV.
+[02_state_month_wind.sbatch](jobs/02_state_month_wind.sbatch) and
+[03_state_month_precip.sbatch](jobs/03_state_month_precip.sbatch) are year
+arrays. Each task reads one annual daily NetCDF file and writes one state-month
+CSV.
 
 Logs are written outside the repo:
 

@@ -22,7 +22,8 @@ It is used to:
 - aggregate daily windspeed from `wind_max` files to check overlapping high-wind and heavy-rain days
 
 
-The heavy raster and NetCDF steps are run through the sbatch files in `jobs/`.
+The heavy raster and NetCDF steps are run through the sbatch files in
+[jobs/](jobs/).
 
 ## Folder Contents
 
@@ -37,27 +38,27 @@ diagnostics/
 jobs/
 ```
 
-`settings.py` defines the country settings: shapefiles, ID columns, year ranges,
-and the raw ERA5-Land path.
+[settings.py](settings.py) defines the country settings: shapefiles, ID
+columns, year ranges, and the raw ERA5-Land path.
 
-`common.py` defines functions used across scripts for checks, CSV writing,
-admin IDs, and ERA5-Land grid reading.
+[common.py](common.py) defines functions used across scripts for checks, CSV
+writing, admin IDs, and ERA5-Land grid reading.
 
-`wind_common.py` defines functions used by the annual wind, daily wind, and
-rain-event wind scripts. It reads `wind_max` files and handles the wind-only
-small-island fallback.
+[wind_common.py](wind_common.py) defines functions used by the annual wind,
+daily wind, and rain-event wind scripts. It reads `wind_max` files and handles
+the wind-only small-island fallback.
 
-`aggregation_scripts/` contains the main scripts for weights, precipitation,
-temperature, and wind. The scripts are described below.
+[aggregation_scripts/](aggregation_scripts/) contains the main scripts for
+weights, precipitation, temperature, and wind. The scripts are described below.
 
-`cell_fallback/` handles small coastal or island admin units whose assigned
-ERA5-Land cells are missing in the raw climate files. See
+[cell_fallback/](cell_fallback/) handles small coastal or island admin units
+whose assigned ERA5-Land cells are missing in the raw climate files. See
 [cell_fallback/README.md](cell_fallback/README.md).
 
-`panel/` prepares ERA5-Land files for the old panel used for the Carleton
-countries. See [panel/README.md](panel/README.md).
+[panel/](panel/) prepares ERA5-Land files for the old panel used for the
+Carleton countries. See [panel/README.md](panel/README.md).
 
-`jobs/` contains the sbatch files used to run the scripts on RCC. See
+[jobs/](jobs/) contains the sbatch files used to run the scripts on RCC. See
 [jobs/README.md](jobs/README.md).
 
 
@@ -83,7 +84,7 @@ aggregation_scripts/06_combine_annual_wind.py
 aggregation_scripts/07_aggregate_daily_wind.py
 ```
 
-The matching sbatch files are in `jobs/`.
+The matching sbatch files are in [jobs/](jobs/).
 
 ### 01_make_weights.py
 
@@ -260,5 +261,5 @@ logs/era5land_admin/
 
 Cell fallback has been applied only where the replacement cell is close enough
 to be defensible. The remaining missing island/territory units are documented
-in `cell_fallback/README.md`. We could revisit them later if those units matter,
-but they are not used in the final analysis sample.
+in [cell_fallback/README.md](cell_fallback/README.md). We could revisit them
+later if those units matter, but they are not used in the final analysis sample.

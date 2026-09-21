@@ -34,12 +34,14 @@ sbatch --array=1950-2025%10 era5land_admin/jobs/aggregation/02_prcp_temp.sbatch 
 sbatch era5land_admin/jobs/aggregation/04_combine_prcp_temp.sbatch
 ```
 
-`01_weights.sbatch` is split by polygon chunks, not years. For example, `BRA 20`
-means Brazil's admin polygons are split into 20 chunks. `--array=0-19%10` runs
-those 20 chunks and lets at most 10 run at the same time.
+[aggregation/01_weights.sbatch](aggregation/01_weights.sbatch) is split by
+polygon chunks, not years. For example, `BRA 20` means Brazil's admin polygons
+are split into 20 chunks. `--array=0-19%10` runs those 20 chunks and lets at
+most 10 run at the same time.
 
-`02_prcp_temp.sbatch` is split by years. For example, `--array=1950-2025%10`
-runs one country-year per task and lets at most 10 years run at the same time.
+[aggregation/02_prcp_temp.sbatch](aggregation/02_prcp_temp.sbatch) is split by
+years. For example, `--array=1950-2025%10` runs one country-year per task and
+lets at most 10 years run at the same time.
 
 Annual wind is separate from precipitation and temperature. Run it only when
 wind controls or wind checks are needed.
@@ -83,8 +85,9 @@ panel/
 These are not needed for the main precipitation/temperature aggregation. They
 build panel-ready files and rain-event wind checks.
 
-`01_panel_ready_climate.sbatch` exports old-panel ids, links ERA5-Land annual
-climate to those ids, and writes the old-panel climate file.
+[panel/01_panel_ready_climate.sbatch](panel/01_panel_ready_climate.sbatch)
+exports old-panel ids, links ERA5-Land annual climate to those ids, and writes
+the old-panel climate file.
 
 ## Logs
 

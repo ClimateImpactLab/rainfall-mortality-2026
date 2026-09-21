@@ -5,7 +5,8 @@ aggregation.
 
 Normally, each admin unit gets climate values from the ERA5-Land grid cells
 inside or near its polygon. Those grid cells already have population and area
-weights from `01_make_weights.py`.
+weights from
+[01_make_weights.py](../aggregation_scripts/01_make_weights.py).
 
 For a few small coastal or island units, the weighted ERA5-Land cells exist but
 are masked by the ERA5-Land land mask. ERA5-Land masks water and ocean cells,
@@ -17,7 +18,8 @@ The fallback works like this:
 
 1. Find admin units that are missing in the climate outputs and matter for the
    mortality panel.
-2. Record those `region_id` values in `step_01_make_fallback_ids.py`.
+2. Record those `region_id` values in
+   [step_01_make_fallback_ids.py](step_01_make_fallback_ids.py).
 3. Run the fallback check with that CSV. The check reads the listed IDs, tests
    their weighted cells against the raw ERA5-Land land mask, and writes a
    detailed check CSV.
@@ -40,15 +42,15 @@ step_02_apply_fallback.py
 step_03_summarize_checks.py
 ```
 
-`step_01_make_fallback_ids.py` writes the reviewed `region_id` lists used by
-the check and apply runs.
+[step_01_make_fallback_ids.py](step_01_make_fallback_ids.py) writes the
+reviewed `region_id` lists used by the check and apply runs.
 
-`step_02_apply_fallback.py` has two modes. `--check` writes the detailed check
-CSV without changing weights. `--apply` writes the same report and moves weights
-to nearby valid land cells.
+[step_02_apply_fallback.py](step_02_apply_fallback.py) has two modes. `--check`
+writes the detailed check CSV without changing weights. `--apply` writes the
+same report and moves weights to nearby valid land cells.
 
-`step_03_summarize_checks.py` turns the detailed check CSVs into one row per
-admin unit and weight type.
+[step_03_summarize_checks.py](step_03_summarize_checks.py) turns the detailed
+check CSVs into one row per admin unit and weight type.
 
 Fallback ID CSVs are stored outside the repo here: 
 
@@ -57,8 +59,9 @@ Fallback ID CSVs are stored outside the repo here:
 ```
 
 A fallback ID file is a small CSV with one column, `region_id`. The reviewed
-IDs are written by `step_01_make_fallback_ids.py`. To change which units are
-checked or moved, edit that script and rerun it.
+IDs are written by
+[step_01_make_fallback_ids.py](step_01_make_fallback_ids.py). To change which
+units are checked or moved, edit that script and rerun it.
 
 ## Rule
 

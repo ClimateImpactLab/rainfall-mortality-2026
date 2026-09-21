@@ -3,28 +3,41 @@
 This folder aggregates gridded climate data to the admin units used in the
 rainfall-mortality project.
 
-The main ERA5-Land code is in `era5land_admin/`. It reads the global
-ERA5-Land files and writes `ERA5-LAND-GLOBAL` outputs.
+The main ERA5-Land code is in [era5land_admin/](era5land_admin/). It reads the
+global ERA5-Land files and writes `ERA5-LAND-GLOBAL` outputs.
 
-The heavy raster and NetCDF steps are run through the sbatch files under the
-`jobs/` folders.
+The heavy raster and NetCDF steps are run through the sbatch files in the code
+folder job folders:
+[era5land_admin/jobs/](era5land_admin/jobs/),
+[chirps_admin/jobs/](chirps_admin/jobs/), and
+[era5land_us_state_month/jobs/](era5land_us_state_month/jobs/).
 
 ## Folders
 
-`era5land_admin/` is the ERA5-Land aggregation code for the mortality panel
-admin units. It rebuilds weights on the global ERA5-Land grid and aggregates
-daily precipitation, temperature, and wind.
+[era5land_admin/](era5land_admin/) is the ERA5-Land aggregation code for the
+mortality panel admin units. It rebuilds weights on the global ERA5-Land grid
+and aggregates daily precipitation, temperature, and wind.
 
-`chirps_admin/` is the CHIRPS precipitation aggregation code for the same
+[chirps_admin/](chirps_admin/) is the CHIRPS precipitation aggregation code for the same
 mortality panel admin units. It is used for precipitation sensitivity checks.
 CHIRPS does not cover the full globe, so only countries within the CHIRPS
 latitude range are included.
 
-`era5land_us_state_month/` is the U.S. state-month ERA5-Land code used for the
-tropical-cyclone confounding check. It follows the Young-Hsiang state-month
-setup and builds all-weather wind and precipitation files for U.S. states.
+[era5land_us_state_month/](era5land_us_state_month/) is the U.S. state-month
+ERA5-Land code used for the tropical-cyclone confounding check. It follows the
+Young-Hsiang state-month setup and builds all-weather wind and precipitation
+files for U.S. states.
 
-Each folder has its own README with run order, inputs, outputs, and caveats.
+[hydro_era5land_admin/](hydro_era5land_admin/) is reserved for future
+hydrology aggregation scripts.
+
+Each active folder has its own README with run order, inputs, outputs, and
+caveats:
+
+- [era5land_admin/README.md](era5land_admin/README.md)
+- [chirps_admin/README.md](chirps_admin/README.md)
+- [era5land_us_state_month/README.md](era5land_us_state_month/README.md)
+- [hydro_era5land_admin/README.md](hydro_era5land_admin/README.md)
 
 ## How the Aggregation Works
 
@@ -103,8 +116,9 @@ Some small coastal or island units need extra care. They can have population or
 area weights, but the raw climate file can still have missing values for the
 assigned cells. For ERA5-Land, this usually comes from the ERA5-Land land mask.
 The reviewed nearby-cell cases are described in
-`era5land_admin/cell_fallback/README.md`. CHIRPS has similar coastal/island
-cases handled inside the CHIRPS settings and aggregation code.
+[era5land_admin/cell_fallback/README.md](era5land_admin/cell_fallback/README.md).
+CHIRPS has similar coastal/island cases handled inside the CHIRPS settings and
+aggregation code.
 
 ## Output Location
 

@@ -12,11 +12,12 @@ This folder has three separate parts:
 1. `00`-`02` add annual ERA5-Land precipitation and temperature to a copy of
    the old Carleton-style global mortality panel through 2010.
 2. `03` builds long-run admin extreme-rain variables that are read later by
-   `1_data/panel_build`.
+   [1_data/panel_build](../../../../panel_build).
 3. `04`-`05` build daily rain/wind overlap event files that are read later by
-   `1_data/panel_build`.
+   [1_data/panel_build](../../../../panel_build).
 
-Wind controls in the final panel come from `1_data/panel_build/scripts/07c_add_wind_exposure.R`.
+Wind controls in the final panel come from
+[1_data/panel_build/scripts/07c_add_wind_exposure.R](../../../../panel_build/scripts/07c_add_wind_exposure.R).
 That script reads the annual wind file from the wind aggregation code, not the
 rain/wind event files made here.
 
@@ -25,7 +26,7 @@ rain/wind event files made here.
 These scripts write a copy of the old global mortality panel with annual
 ERA5-Land precipitation and temperature variables added.
 
-`00_export_panel_ids.do`
+[00_export_panel_ids.do](00_export_panel_ids.do)
 
 Reads the old global mortality panel and exports the admin-year IDs that need
 ERA5-Land climate values:
@@ -38,7 +39,7 @@ The export is limited to years through 2010 to match the old Carleton-style
 panel period. This script only writes the admin-year ID data. It does not merge
 climate data.
 
-`01_link_panel_climate.py`
+[01_link_panel_climate.py](01_link_panel_climate.py)
 
 Links already-aggregated annual ERA5-Land climate data to the old-panel admin
 IDs from `00_export_panel_ids.do`.
@@ -80,7 +81,7 @@ no ERA5-Land values.
 Only population-weighted annual precipitation and temperature variables are
 written for the old-panel merge.
 
-`02_add_era5land_to_old_panel.do`
+[02_add_era5land_to_old_panel.do](02_add_era5land_to_old_panel.do)
 
 Opens the old global mortality panel through 2010 and merges in:
 
@@ -95,12 +96,12 @@ panel.
 Run order:
 
 1. `00_export_panel_ids.do`
-2. `01_link_panel_climate.py`
+2. [01_link_panel_climate.py](01_link_panel_climate.py)
 3. `02_add_era5land_to_old_panel.do`
 
 ## Final-Panel Extreme-Rain Variables
 
-`03_admin_precip_exposure.py`
+[03_admin_precip_exposure.py](03_admin_precip_exposure.py)
 
 Builds long-run admin extreme-rain variables from existing daily admin
 precipitation files. This is the “days above rainfall thresholds” file.
@@ -143,7 +144,7 @@ the mortality panel are added later by:
 1_data/panel_build/scripts/07d_add_daily_rain_wind_overlap.R
 ```
 
-`04_rain_wind_events.py`
+[04_rain_wind_events.py](04_rain_wind_events.py)
 
 Finds admin-days where population-weighted daily precipitation is at least
 100 mm.
@@ -159,9 +160,10 @@ The plus/minus 1 day window allows rain and wind from the same storm to fall on
 nearby recorded dates.
 This is all-weather ERA5-Land wind, not tropical cyclone track exposure.
 
-`05_combine_rain_wind_events.py`
+[05_combine_rain_wind_events.py](05_combine_rain_wind_events.py)
 
-Stacks the country-level rain/wind event files from `04_rain_wind_events.py`
+Stacks the country-level rain/wind event files from
+[04_rain_wind_events.py](04_rain_wind_events.py)
 and writes event examples and threshold summaries:
 
 ```text

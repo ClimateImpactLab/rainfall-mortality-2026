@@ -12,7 +12,7 @@ Two CHIRPS details matter for this folder:
   current shapefile fits within the CHIRPS latitude range.
 - A few small coastal or island polygons have CHIRPS weights, but the assigned
   precipitation cell is masked in the raw CHIRPS file. Those cases are listed in
-  `settings.py`.
+  [settings.py](settings.py).
 
 Precipitation powers are calculated at the CHIRPS grid-cell level before admin
 averaging:
@@ -63,15 +63,16 @@ aggregation_scripts/
 jobs/
 ```
 
-`settings.py` lists the shapefiles, admin IDs, year ranges, and CHIRPS-specific
-small-cell rules.
+[settings.py](settings.py) lists the shapefiles, admin IDs, year ranges, and
+CHIRPS-specific small-cell rules.
 
-`common.py` defines checks, CSV writing, admin ID handling, shapefile reading,
-and CHIRPS grid reading.
+[common.py](common.py) defines checks, CSV writing, admin ID handling,
+shapefile reading, and CHIRPS grid reading.
 
-`aggregation_scripts/01_make_weights.py` builds fixed admin-to-CHIRPS-cell
-weights. Population weights use LandScan 2011. Area weights use GPW 2010
-land-area points, not GPW population. These weights are reused for all years.
+[aggregation_scripts/01_make_weights.py](aggregation_scripts/01_make_weights.py)
+builds fixed admin-to-CHIRPS-cell weights. Population weights use LandScan
+2011. Area weights use GPW 2010 land-area points, not GPW population. These
+weights are reused for all years.
 
 GPW stands for Gridded Population of the World. Here we use its land-area data,
 not its population data. In this repo, the GPW land-area data are stored as a
@@ -93,13 +94,15 @@ GPW land-area point table:
 /project/cil/gcp/temp_data/gpw_2010_land_area_points
 ```
 
-`aggregation_scripts/02_aggregate_daily.py` reads daily CHIRPS precipitation
-and writes daily, monthly, and annual admin files.
+[aggregation_scripts/02_aggregate_daily.py](aggregation_scripts/02_aggregate_daily.py)
+reads daily CHIRPS precipitation and writes daily, monthly, and annual admin
+files.
 
-`aggregation_scripts/03_check_outputs.py` checks source files, weights, row
-counts, columns, and annual non-missing precipitation.
+[aggregation_scripts/03_check_outputs.py](aggregation_scripts/03_check_outputs.py)
+checks source files, weights, row counts, columns, and annual non-missing
+precipitation.
 
-The matching sbatch files are in `jobs/`.
+The matching sbatch files are in [jobs/](jobs/).
 
 ## Countries
 
@@ -107,22 +110,25 @@ The matching sbatch files are in `jobs/`.
 AUS BRA COL ECU IND JPN KOR MEX PER PHL
 ```
 
-These are the countries listed in `settings.py`. The list is limited partly
-because CHIRPS does not cover high latitudes. Do not add a country without first
-checking that the full current shapefile is covered by CHIRPS.
+These are the countries listed in [settings.py](settings.py). The list is
+limited partly because CHIRPS does not cover high latitudes. Do not add a
+country without first checking that the full current shapefile is covered by
+CHIRPS.
 
 ## Small-Cell Rules
 
 CHIRPS has two separate small-cell issues.
 
 Some small polygons contain no CHIRPS grid-cell center. For countries with
-`uncovered_cell_rule="nearest_grid_cell"`, `01_make_weights.py` uses the CHIRPS
+`uncovered_cell_rule="nearest_grid_cell"`,
+[01_make_weights.py](aggregation_scripts/01_make_weights.py) uses the CHIRPS
 cell containing a representative point inside the polygon.
 
 Some coastal or island polygons have weights, but the assigned CHIRPS
 precipitation cells are masked in the raw file. For countries with
-`masked_cell_rule="nearest_valid_cell"`, `02_aggregate_daily.py` copies values
-from a nearby finite CHIRPS cell within the country-specific radius.
+`masked_cell_rule="nearest_valid_cell"`,
+[02_aggregate_daily.py](aggregation_scripts/02_aggregate_daily.py) copies
+values from a nearby finite CHIRPS cell within the country-specific radius.
 
 ## Usual Run Order
 
