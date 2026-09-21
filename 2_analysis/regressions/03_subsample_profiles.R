@@ -162,42 +162,7 @@ dir.create(diag_dir, recursive = TRUE, showWarnings = FALSE)
 # Regression sample
 # -----------------------------
 
-add_daily_overlap <- function(df) {
-  overlap_path <- file.path(
-    DIR_REPO_RAINFALL_MORTALITY,
-    "output/data/wind_precip_confounding/daily_precip_wind_overlap_panel_ready",
-    "admin_year_daily_overlap_panel_ready.csv"
-  )
-
-  overlap <- read_csv(overlap_path, show_col_types = FALSE) %>%
-    select(
-      iso,
-      admin_id,
-      year,
-      starts_with("rain_days_"),
-      starts_with("share_rain_days_"),
-      max_rain_event_mm,
-      max_wind_on_rain_event_pm1day,
-      wind_on_max_rain_day,
-      wind_pm1day_on_max_rain_day
-    )
-
-  # Missing rows mean the admin-year had no daily rain event >= 100 mm
-  # The rain-wind count variables are therefore zero
-  df %>%
-    left_join(overlap, by = c("iso", "admin_id", "year")) %>%
-    mutate(
-      rain_days_100_wind_pm1day = coalesce(rain_days_100_wind_pm1day, 0),
-      rain_days_200_wind_pm1day = coalesce(rain_days_200_wind_pm1day, 0)
-    )
-}
-
 df <- load_new_panel(prcp_product = "ERA5LAND", temp_product = "ERA5LAND", require_urban = TRUE)
-
-if (length(daily_overlap_needed_vars) > 0) {
-  df <- df %>%
-    add_daily_overlap()
-}
 
 # These regressions use the main rainfall sample, plus the variables needed to
 # define the Mumbai-profile groups

@@ -34,42 +34,14 @@ population-weighted rain. This script breaks those events into 100, 200, and
 The output is one Excel workbook with global counts, country counts, admin-year
 summaries, and a few large-event tables.
 
-### 02_make_daily_overlap_panel.R
-
-Turns the daily rain-event file into the annual variables used in the
-regression checks.
-
-The regressions need one row per mortality admin-year. This script counts, for
-each admin-year, how many extreme-rain days occurred and how many of those days
-also had high wind within one day.
-
-The main output is:
+The admin-year rain/wind variables used by the regressions are now added during
+the panel build:
 
 ```text
-admin_year_daily_overlap_panel_ready.csv
+1_data/panel_build/scripts/07d_add_daily_rain_wind_overlap.R
 ```
 
-There is some country-specific ID work in the middle because the daily climate
-file and the mortality panel do not always name admin units the same way. That
-is just to get the daily events onto the mortality `admin_id` before counting
-admin-year events.
-
-The regression checks mostly use:
-
-```text
-rain_days_100_wind_pm1day
-rain_days_200_wind_pm1day
-```
-
-The script also saves a small workbook to check that the matching worked.
-
-The regression scripts that read this file are:
-
-* `01_main_response.R`
-* `03_subsample_profiles.R`
-* `05_wind_control_coefficients.R`
-
-### 03_annual_overlap_check.R
+### 02_annual_overlap_check.R
 
 Checks whether unusually wet admin-years also tend to be unusually windy.
 
@@ -84,14 +56,14 @@ annual rain and wind cases, including years that are high in both and very wet
 years that are not especially windy.
 
 This is a descriptive annual check of how closely the two climate measures move
-together. It is separate from the daily overlap variables created in
-`02_make_daily_overlap_panel.R` for the regression checks.
+together. It is separate from the daily overlap variables added by the panel
+build for the regression checks.
 
 The script writes the joined annual climate file and an Excel workbook with the
 overlap tables, correlations, country summaries, and extreme annual cases.
 
 
-### 04_tc_event_spot_check.py
+### 03_tc_event_spot_check.py
 
 Checks whether ERA5-Land wind captures large wind values around 12 known
 tropical cyclone events.
@@ -118,11 +90,11 @@ tc_event_top_admins.csv
 tc_event_summary.csv
 ```
 
-### 05_tc_event_spot_check_report.Rmd
+### 04_tc_event_spot_check_report.Rmd
 
 Summarizes the known-storm check in an HTML report.
 
-The report reads the three CSVs from `04_tc_event_spot_check.py`. It shows the
+The report reads the three CSVs from `03_tc_event_spot_check.py`. It shows the
 highest-wind admin units for each storm, rankings by admin-mean wind and max
 grid-cell wind, the share of population exposed to wind above 17.5 m/s, rainfall
 during the event window, and daily values for the top five admin units.
@@ -130,7 +102,7 @@ during the event window, and daily values for the top five admin units.
 When knitted from RStudio, the HTML is written next to the R Markdown file:
 
 ```text
-05_tc_event_spot_check_report.html
+04_tc_event_spot_check_report.html
 ```
 
 ## Main Files
@@ -166,12 +138,6 @@ All outputs from these checks are under:
 
 ```text
 output/data/wind_precip_confounding/
-```
-
-### Daily overlap file used in the regressions:
-
-```text
-output/data/wind_precip_confounding/daily_precip_wind_overlap_panel_ready/admin_year_daily_overlap_panel_ready.csv
 ```
 
 ### Daily overlap tables:
@@ -214,5 +180,3 @@ change in the rainfall response after adding wind controls in our analysis is no
 simply because the wind variable is failing to capture relevant storm-related wind.
 
 See also [`wind_tc_validation`](../../wind_tc_validation/README.md).
-
-

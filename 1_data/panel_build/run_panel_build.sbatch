@@ -30,6 +30,7 @@ $R scripts/06_add_chirps.R
 $R scripts/07_add_adm1_climate.R
 $R scripts/07b_add_admin_precip_exposure.R
 $R scripts/07c_add_wind_exposure.R
+$R scripts/07d_add_daily_rain_wind_overlap.R
 
 # Add urban, income, elevation, and density variables.
 $R scripts/08_add_urban.R

@@ -1,209 +1,110 @@
 # Rainfall-Mortality Panel Build
 
-This folder builds the rainfall-mortality panel from the cleaned country
-mortality files and adds the covariates used in the analysis.
+This folder builds the rainfall-mortality analysis panel. It starts from the
+old Carleton mortality panel, adds cleaned mortality data for the newer
+countries, and then adds climate, income, urban, elevation, and density
+covariates. The original Carleton panel is read but never overwritten.
 
-The old Carleton panel is read but not overwritten. New panel files are written
-under:
+Main outputs:
+
+```text
+combined_panel/new_mortality_panel.csv
+combined_panel/new_mortality_panel_urban.csv
+```
+
+`new_mortality_panel.csv` is the base panel. `new_mortality_panel_urban.csv`
+adds GHSL urban variables and is the file most regression scripts read. The
+final export step also writes RDS and Stata copies of both panels.
+
+Panel outputs live under:
 
 ```text
 /project/cil/gcp/estimation/rainfall-mortality/mortality_data/panel_build
 ```
 
-`country_files.csv` lists the cleaned mortality files for the newly added
-countries.
+## Panel Admin IDs
 
-## Folder structure
+`admin_id` is the final analysis admin unit used for panel merges and
+regressions. The original `adm1_id`, `adm2_id`, and `adm3_id` columns are kept
+where they exist.
 
-```text
-scripts/   panel-build scripts
-logs/      Slurm logs
-```
+For old Carleton-panel countries, ADM2 is the final analysis unit, and
+`admin_id` combines `adm1_id` and `adm2_id`. The newly added countries already
+come with an `admin_id` in their cleaned mortality files. `country_files.csv`
+lists those cleaned country files and their year ranges.
 
-Panel files are written here:
+Intermediate files are organized as:
 
 ```text
 old_panel/       trimmed old panel
-new_countries/   new-country intermediate files
-combined_panel/  combined mortality panels
-checks/          final panel check from 11_check_panel.R
+new_countries/  new-country mortality and climate files
+combined_panel/ combined panel files
+checks/         final panel check workbook
+logs/           Slurm logs
 ```
 
-## Main outputs
+## Build Order
+
+### 1. Build the Mortality Panel
+
+`01_trim_old_panel.R` trims the old Carleton ERA5-Land panel to the variables
+needed here. It keeps mortality, old-panel income, and the ERA5-Land climate
+variables already present in that panel, then puts the old admin IDs into the
+shared panel admin ID format.
+
+`02_prepare_new_countries.R` stacks the cleaned mortality files listed in
+`country_files.csv`. This step is mortality only: climate, income, and other
+covariates are added later.
+
+`03_merge_climate.R` adds annual ERA5-Land precipitation and temperature
+polynomial variables to the new-country mortality rows. Most new countries use
+ADM2 ERA5-Land files. The Philippines uses ADM3. Country-specific ID columns
+are padded where needed before matching to `admin_id`.
+
+`04_merge_adm1_income.R` adds the older Carleton-style ADM1-year income
+variables to the new countries. Income is matched by `iso`, `adm1_id`, and
+`year`, so every analysis unit inside an ADM1 receives the same annual income
+value. The fixed `gdppc_adm1_avg` and `loggdppc_adm1_avg` variables are the
+2005-2014 ADM1 averages used for income classification.
+
+`05_build_panel.R` appends the trimmed old panel and the new-country
+mortality-climate-income panel. The result is the base combined CSV:
 
 ```text
-panel_build/combined_panel/new_mortality_panel.csv
-panel_build/combined_panel/new_mortality_panel_urban.csv
+combined_panel/new_mortality_panel.csv
 ```
 
-`new_mortality_panel.csv` is the base panel.
+### 2. Add Climate Measures
 
-`new_mortality_panel_urban.csv` adds the GHSL urban variables:
+ERA5-Land is the main climate dataset. CHIRPS is added as an alternative
+precipitation measure.
+
+`06_add_chirps.R` adds `prcp_poly_1_CHIRPS` through `prcp_poly_5_CHIRPS`.
+CHIRPS is ADM2 for most countries, ADM3 for the Philippines, and ADM1 for
+Japan. India and Mexico use the existing panel admin IDs to recover the old
+Carleton-style admin IDs.
+
+`07_add_adm1_climate.R` adds ADM1 ERA5-Land climate for the new countries.
+ERA5-Land is available below ADM1 for these countries, so the script averages
+lower-level admin values to ADM1 using LandScan 2011 population weights. It
+adds annual ADM1 temperature, precipitation, cooling degree days, and heating
+degree days, plus long-run ADM1 averages over the available years.
+
+`07b_add_admin_precip_exposure.R` adds long-run admin extreme-rain measures
+from the file built by:
 
 ```text
-year_5s
-ghsl_population
-settlement_type
-urban_share
+1_data/climate_data/climate_aggregation_global/era5land_admin/panel/
+03_admin_precip_exposure.py
 ```
 
-The final export step also writes RDS and Stata copies of both panels.
+These variables are based on population-weighted daily admin precipitation.
+They measure the average annual number of days above 50, 100, 150, and
+200 mm, the average annual maximum daily rain, and the average daily-rain p99.
+Old-panel countries are matched through the ERA5-Land crosswalk, while new
+countries use the admin ID stored in `region_id`.
 
-## Run order
-
-### 01_trim_old_panel.R
-
-Reads the old Carleton mortality panel and keeps the variables needed for the
-new panel.
-
-It writes a trimmed old-panel file under:
-
-```text
-panel_build/old_panel/
-```
-
-For old-panel countries, ADM2 is the final analysis unit
-`admin_id` combines `adm1_id` and `adm2_id`.
-
-### 02_prepare_new_countries.R
-
-Combines the cleaned mortality files listed in `country_files.csv`
-
-`admin_id` and `admin_name` identify the final analysis unit.
-ADM1, ADM2, and ADM3 variables are also kept where those levels are available.
-
-This step contains mortality only.
-Climate, income, and other covariates are added later.
-
-It writes the first new-country panel under:
-
-```text
-panel_build/new_countries/
-```
-
-### 03_merge_climate.R
-
-Adds annual ERA5-Land climate variables to the new-country mortality panel by
-`iso`, `admin_id`, and `year`.
-
-Most countries use ADM2 ERA5-Land files. The Philippines uses ADM3.
-
-This step updates the new-country panel under:
-
-```text
-panel_build/new_countries/
-```
-
-### 04_merge_adm1_income.R
-
-Adds the older ADM1-year income variables to the new-country mortality-climate
-panel by `iso`, `adm1_id`, and `year`.
-
-Income is matched at the ADM1 or income-region level, so admin units within the
-same ADM1 receive the same annual income value.
-
-The fixed `gdppc_adm1_avg` and `loggdppc_adm1_avg` variables are 2005-2014 ADM1
-averages used for income classification.
-
-This step updates the new-country panel under:
-
-```text
-panel_build/new_countries/
-```
-
-### 05_build_panel.R
-
-Combines the trimmed old panel with the new-country panel.
-
-It writes:
-
-```text
-panel_build/combined_panel/new_mortality_panel.csv
-```
-
-### 06_add_chirps.R
-
-Adds the five CHIRPS precipitation polynomial variables:
-
-```text
-prcp_poly_1_CHIRPS
-prcp_poly_2_CHIRPS
-prcp_poly_3_CHIRPS
-prcp_poly_4_CHIRPS
-prcp_poly_5_CHIRPS
-```
-
-ERA5-Land remains the main climate dataset.
-CHIRPS is kept as an additional precipitation measure.
-
-This step updates:
-
-```text
-panel_build/combined_panel/new_mortality_panel.csv
-```
-
-### 07_add_adm1_climate.R
-
-Adds ADM1 ERA5-Land climate variables for the new countries:
-
-```text
-tavg_ERA5LAND_adm1
-prcp_ERA5LAND_adm1
-tmax_cdd_20C_ERA5LAND_adm1
-tmax_hdd_20C_ERA5LAND_adm1
-lr_tavg_ERA5LAND_adm1_avg
-lr_prcp_ERA5LAND_adm1_avg
-lr_cdd_20C_ERA5LAND_adm1_avg
-lr_hdd_20C_ERA5LAND_adm1_avg
-```
-
-ERA5-Land is available at ADM2 for AUS, COL, ECU, KOR, and PER, and at ADM3
-for PHL.
-These lower-level values are averaged to ADM1 using LandScan 2011
-population weights.
-
-The long-run variables are averages over the years available for each country,
-matching the approach used for the old panel.
-
-This step updates:
-
-```text
-panel_build/combined_panel/new_mortality_panel.csv
-```
-
-### 07b_add_admin_precip_exposure.R
-
-Adds static admin-level ERA5-Land extreme precipitation variables:
-
-```text
-prcp_pop_days_gt50_ERA5LAND_admin_avg
-prcp_pop_days_gt100_ERA5LAND_admin_avg
-prcp_pop_days_gt150_ERA5LAND_admin_avg
-prcp_pop_days_gt200_ERA5LAND_admin_avg
-prcp_pop_annual_max_ERA5LAND_admin_avg
-prcp_pop_p99_ERA5LAND_admin_avg
-precip_exposure_years
-precip_exposure_days_observed
-```
-
-These are built from population-weighted daily precipitation in:
-
-```text
-1_data/climate_data/climate_aggregation/scripts/era5land_admin/panel/
-04_build_admin_precip_exposure.py
-```
-
-The days-above-threshold variables are average annual counts of days above 50,
-100, 150, and 200 mm/day.
-The annual maximum and daily p99 measures are also averaged over the available
-years.
-
-This step updates `new_mortality_panel.csv`. If the urban panel already exists,
-it updates that too.
-
-### 07c_add_wind_exposure.R
-
-Adds annual ERA5-Land wind variables:
+`07c_add_wind_exposure.R` adds annual all-weather ERA5-Land wind variables:
 
 ```text
 windmax_pop_annual
@@ -212,21 +113,45 @@ winddays_17p5_pop_annual
 winddays_17p5_area_annual
 ```
 
-The wind file is built from daily `wind_max` in:
+These are not tropical-cyclone track variables. They come from annual summaries
+of ERA5-Land daily maximum wind. As with the extreme-rain measures, old-panel
+countries use the ERA5-Land crosswalk and new countries use `region_id`.
+
+`07d_add_daily_rain_wind_overlap.R` summarizes daily extreme-rain event files
+to admin-year variables before adding them to the panel. The event files come
+from:
 
 ```text
-1_data/climate_data/climate_aggregation/scripts/era5land_admin/
-aggregation_scripts/07_combine_wind_exposure.py
+1_data/climate_data/climate_aggregation_global/era5land_admin/panel/
+04_rain_wind_events.py
+05_combine_rain_wind_events.py
 ```
 
-The merge uses `iso`, `admin_id`, and `year`
+The script counts daily rain events at 100, 200, and 300 mm, then counts how
+many of those days also had high wind within one day. High wind is defined as
+some population-weighted grid-cell exposure above 17.5 m/s. It also keeps the
+wettest event in each admin-year and the same-day and plus/minus-one-day wind
+around that event.
 
-This step updates `new_mortality_panel.csv`. If the urban panel already exists,
-it updates that too. 
+Common variables from this step include:
 
-### 08_add_urban.R
+```text
+rain_days_100_wind_pm1day
+rain_days_200_wind_pm1day
+share_rain_days_100_wind_pm1day
+share_rain_days_200_wind_pm1day
+max_rain_event_mm
+max_wind_on_rain_event_pm1day
+wind_on_max_rain_day
+wind_pm1day_on_max_rain_day
+```
 
-Creates the urban panel by adding GHSL variables to the base panel:
+Admin-years with no daily rain event at or above 100 mm get zero event counts.
+Maxima and shares stay missing because no event occurred.
+
+### 3. Add Other Covariates
+
+`08_add_urban.R` creates the urban panel by adding GHSL variables:
 
 ```text
 year_5s
@@ -235,145 +160,72 @@ settlement_type
 urban_share
 ```
 
-GHSL is available every five years. 
-Mortality years are matched to the nearest five-year GHSL year, with years
-before 1975 assigned to 1975. 
+GHSL is available every five years. Mortality years are matched to the nearest
+five-year GHSL year, with years before 1975 assigned to 1975. Country matching
+uses different ID rules for new countries, most old-panel countries, Japan, and
+Europe.
 
-It writes:
+`09_add_kummu_income.R` adds gridded Kummu income aggregated to the panel admin
+units. Annual values merge by `iso`, `admin_id`, and `year`. The 2010-2024
+profile variables merge by `iso` and `admin_id`. These variables stay separate
+from the older ADM1 income variables added in `04_merge_adm1_income.R`.
 
-```text
-panel_build/combined_panel/new_mortality_panel_urban.csv
-```
+`10_add_elevation.R` adds fixed FABDEM elevation measures by `iso` and
+`admin_id`, including area-weighted median elevation, population-weighted
+median elevation, and shares of area or LandScan 2011 population below low
+elevation cutoffs.
 
-### 09_add_kummu_income.R
+`10b_add_pop_density.R` adds fixed population density measures by `iso` and
+`admin_id`: mortality-panel population density, LandScan 2011 density,
+population-weighted LandScan 2011 density, and population-weighted GHSL 2010
+density.
 
-Adds Kummu admin-level income variables to both the base and urban panels. 
+### 4. Check and Export
 
-Annual Kummu income merges by `iso`, `admin_id`, and `year`
-The 2010-2024 profile variables are fixed within admin unit and merge by `iso`
-and `admin_id`
-
-These variables are kept separately from the older ADM1 income variables.
-
-This step updates both combined panel CSVs.
-
-### 10_add_elevation.R
-
-Adds the FABDEM elevation variables:
-
-```text
-elev_median_m
-share_area_elev_lt_10m
-elev_pop_median_m
-share_pop_elev_lt_5m
-share_pop_elev_lt_10m
-share_pop_elev_lt_20m
-```
-
-Elevation is fixed over time and merges by `iso` and `admin_id`.
-
-This step updates both combined panel CSVs.
-
-### 10b_add_pop_density.R
-
-Adds the population density variables:
-
-```text
-panel_pop_density
-landscan2011_pop_density
-landscan2011_pop_pop_density
-ghsl2010_pop_pop_density
-```
-
-Population density is fixed over time and merges by `iso` and `admin_id`.
-
-This step updates both combined panel CSVs.
-
-### 11_check_panel.R
-
-Runs the final checks on the combined CSV panel.
-
-The workbook includes:
-
-```text
-summary
-countries
-rows_by_age
-duplicate_rows
-missing_by_country
-deathrate_summary
-top_deathrates
-small_populations
-```
-
-It writes:
+`11_check_panel.R` writes the final check workbook:
 
 ```text
 checks/panel_checks.xlsx
 ```
 
-This file is written under the project data folder, not in the repo:
+The useful sheets are `summary`, `countries`, `rows_by_age`,
+`duplicate_rows`, `missing_by_country`, `deathrate_summary`,
+`top_deathrates`, and `small_populations`.
+
+The workbook is written under the project data folder:
 
 ```text
 /project/cil/gcp/estimation/rainfall-mortality/mortality_data/panel_build/checks/
 ```
 
-### 12_export_panel.R
-
-Exports both final CSV panels as RDS and Stata files.
-
-The RDS files keep the panel variable names unchanged. 
-A small number of long variable names are shortened in the Stata files because
-Stata has a variable-name length limit.
-
-It writes:
+`12_export_panel.R` writes RDS and Stata copies of the two CSV panels:
 
 ```text
-panel_build/combined_panel/new_mortality_panel.rds
-panel_build/combined_panel/new_mortality_panel.dta
-panel_build/combined_panel/new_mortality_panel_urban.rds
-panel_build/combined_panel/new_mortality_panel_urban.dta
+combined_panel/new_mortality_panel.rds
+combined_panel/new_mortality_panel.dta
+combined_panel/new_mortality_panel_urban.rds
+combined_panel/new_mortality_panel_urban.dta
 ```
 
-## Checks
+RDS files keep the CSV variable names. A few long precipitation-exposure names
+are shortened only in the Stata files because of Stata's variable-name limit.
 
-Most scripts only stop when something would clearly break the panel: a missing
-input file, duplicated merge rows, or a merge that changes the number of
-mortality rows
+## Running the Build
 
-`11_check_panel.R` writes the detailed check workbook at the end:
-
-```text
-/project/cil/gcp/estimation/rainfall-mortality/mortality_data/panel_build/checks/panel_checks.xlsx
-```
-
-## Slurm scripts
-
-The sbatch files write Slurm output under `logs/`.
-That folder is ignored by git, so create it before submitting if it is missing:
+Create the log folder if it is missing:
 
 ```text
 mkdir -p logs
 ```
 
-Rebuild the full panel:
+Run the full panel build:
 
 ```text
-run_panel_build.sbatch
+sbatch run_panel_build.sbatch
 ```
 
-Refresh only the final checks and RDS/Stata exports:
+Refresh only the final check workbook and RDS/Stata exports:
 
 ```text
-run_checks_exports.sbatch
+sbatch run_checks_exports.sbatch
 ```
-
-## Notes
-
-- `admin_id` identifies the final analysis unit
-- `adm1_id`, `adm2_id`, and `adm3_id` keep the original administrative IDs for
-  the levels available in each country
-- Kummu income is separate from the older ADM1 income variables
-- Elevation and population density are fixed over time and merge by `iso` and `admin_id`
-- ERA5-Land is the main climate dataset, CHIRPS is kept as an additional
-  precip measure for robustness checks

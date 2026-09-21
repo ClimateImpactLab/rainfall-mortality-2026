@@ -215,31 +215,6 @@ specs <- if (spec_set == "main_two") new_panel_specs else four_specs
 
 
 # -----------------------------
-# Daily overlap controls
-# -----------------------------
-
-add_daily_overlap <- function(df) {
-  overlap_path <- file.path(
-    DIR_REPO_RAINFALL_MORTALITY,
-    "output/data/wind_precip_confounding/daily_precip_wind_overlap_panel_ready",
-    "admin_year_daily_overlap_panel_ready.csv"
-  )
-  
-  overlap <- read_csv(overlap_path, show_col_types = FALSE) %>%
-    select(iso, admin_id, year, starts_with("rain_days_"))
-  
-  # Missing rows mean the admin-year had no daily rain event >= 100 mm
-  # The rain-wind count variables are therefore zero
-  df %>%
-    left_join(overlap, by = c("iso", "admin_id", "year")) %>%
-    mutate(
-      rain_days_100_wind_pm1day = coalesce(rain_days_100_wind_pm1day, 0),
-      rain_days_200_wind_pm1day = coalesce(rain_days_200_wind_pm1day, 0)
-    )
-}
-
-
-# -----------------------------
 # Country groups
 # -----------------------------
 
@@ -331,11 +306,6 @@ coef_groups <- if (country_group == "tc_prone") {
 make_main_sample <- function(extra_vars) {
   df <- load_new_panel(prcp_product = "ERA5LAND", temp_product = "ERA5LAND")
   
-  # Rain-wind overlap variables are stored in a separate admin-year file
-  if (any(startsWith(extra_vars, "rain_days_"))) {
-    df <- add_daily_overlap(df)
-  }
-  
   df <- filter_regression_sample(
     df,
     tavg_order = 2,
@@ -360,11 +330,6 @@ make_profile4_sample <- function(extra_vars) {
     temp_product = "ERA5LAND",
     require_urban = TRUE
   )
-  
-  # Rain-wind overlap variables are stored in a separate admin-year file
-  if (any(startsWith(extra_vars, "rain_days_"))) {
-    df <- add_daily_overlap(df)
-  }
   
   # Use the Profile 4 regression sample plus the requested wind variables
   df <- df %>%

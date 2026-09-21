@@ -43,7 +43,7 @@ h1, h2, h3 {
 USER <- Sys.getenv("USER")
 source("../../../0_utils/paths.R")
 
-# Outputs from 04_tc_event_spot_check.py
+# Outputs from 03_tc_event_spot_check.py
 input_dir <- file.path(
   DIR_REPO_RAINFALL_MORTALITY, "output", "data", "wind_precip_confounding",
   "tc_event_spot_check"
