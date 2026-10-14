@@ -62,3 +62,8 @@ output/figures/phl/
 output/figures/wind_tc_validation/
 output/tables/phl/
 output/tables/wind_tc_validation/
+
+# Drought results (regression CSVs, figures, tables), rebuilt by the scripts
+# in 2_analysis/drought/
+output/data/drought/
+output/data/precip-monthly/

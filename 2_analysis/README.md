@@ -48,6 +48,10 @@ diagnostics/
 sbatch/
   Slurm scripts for longer or repeated runs
 
+drought/
+  Brazil drought and mortality, annual and monthly (measures, regs,
+  figures), see drought/README.md
+
 archive/
   Older scripts kept for reference
 ```
