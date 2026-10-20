@@ -179,4 +179,4 @@ meaningful damaging-wind exposure. This makes it more reassuring that the small
 change in the rainfall response after adding wind controls in our analysis is not 
 simply because the wind variable is failing to capture relevant storm-related wind.
 
-See also [`wind_tc_validation`](../../wind_tc_validation/README.md).
+See also [`wind_tc_validation`](https://github.com/ClimateImpactLab/rainfall-mortality-2026/tree/main/adhoc/wind_tc_validation).
