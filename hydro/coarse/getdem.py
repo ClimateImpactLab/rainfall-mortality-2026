@@ -1,7 +1,7 @@
 import xarray as xr
 import rioxarray
 
-ds = xr.open_dataset('era5_land_orography.nc')
+ds = xr.open_dataset('/project/cil/gcp/climate/taudem_conus/geo_working/era5_land_orography.nc')
 
 # Convert Geopotential (z) to Elevation in Meters
 gravity = 9.80665
@@ -17,4 +17,4 @@ dem_meters = dem_meters.isel(time=0).drop_vars('time')
 # Set the coordinate reference system (WGS84 / EPSG:4326)
 dem_meters = dem_meters.rio.write_crs("EPSG:4326")
 
-dem_meters.rio.to_raster("composite.tif")
+dem_meters.rio.to_raster("/project/cil/gcp/climate/taudem_conus/geo_working/composite.tif")

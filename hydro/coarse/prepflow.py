@@ -1,19 +1,28 @@
+import glob
 import os
 from collections import defaultdict, deque
 import xarray as xr
 import rioxarray
 import numpy as np
 
-regions = ['asia_east', 'australia', 'brazil', 'europe', 'india', 'latam', 'mexico_south', 'usa']
+# One global domain from ERA5-LAND-GLOBAL (see transform.py). Its grid is a
+# row subset of the D8 grid below (same 0.1-degree cell centers), so the
+# coordinate matching further down works unchanged. The earlier regional boxes were:
+# regions = ['asia_east', 'australia', 'brazil', 'europe', 'india', 'latam', 'mexico_south', 'usa']
+regions = ['global']
 
-outdir = "/project/cil/gcp/climate/ERA5-LAND/processed/monthly"
+# Regional outputs stay in /project/cil/gcp/climate/ERA5-LAND/processed/monthly
+outdir = "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/processed/monthly"
+testdir = os.path.join(outdir, "test")
+os.makedirs(testdir, exist_ok=True)
 
 # Load rainfall from NetCDF
-ds = xr.open_dataset("era5-land-example.nc4", chunks={'time': 1})  # or larger chunks as desired
+here = os.path.dirname(os.path.abspath(__file__))
+ds = xr.open_dataset(os.path.join(here, "era5-land-example.nc4"), chunks={'time': 1})
 rain = ds['ro']  # shape (time, y, x) or (y, x) if single snapshot
 
 # Load TauDEM D8 directions
-d8 = rioxarray.open_rasterio("compositep.tif")    # shape (1, y, x)
+d8 = rioxarray.open_rasterio("/project/cil/gcp/climate/taudem_conus/geo_working/compositep_01deg.tif")    # shape (1, y, x)
 d8 = d8.squeeze("band", drop=True)  # -> shape (y, x)
 
 assert rain.shape[-2:] == d8.shape[-2:]
@@ -85,52 +94,24 @@ topo_order = []
 while queue:
     u = queue.popleft()
     topo_order.append(u)
-    for v in downstream[u:u+1]:  # actually, we’ll use downstream array later
-        # we don’t need v here; we just consume upstream via in_degree
-        pass
-    for v in upstream_neighbors[u]:
-        in_degree[v] -= 1
-        if in_degree[v] == 0:
-            queue.append(v)
-            
-# topo_order now lists cells from "most upstream" to "most downstream"
+    j = downstream[u]
+    if j >= 0:
+        in_degree[j] -= 1
+        if in_degree[j] == 0:
+            queue.append(j)
+
 topo_order = np.array(topo_order, dtype=np.int64)
 
-def accumulate_rain_single(rain_2d, downstream, topo_order):
-    """
-    rain_2d: 2D np.array (ny, nx)
-    downstream: flattened int array of length ny*nx (-1 for sinks)
-    topo_order: list of flattened indices, upstream→downstream
-    """
-    ny, nx = rain_2d.shape
-    n = ny * nx
-    rain_flat = rain_2d.ravel().astype(np.float64)
-    acc = np.zeros_like(rain_flat)
-    
-    # Process cells upstream→downstream
-    for i in topo_order:
-        # Start with local rain
-        acc[i] += rain_flat[i]
-        j = downstream[i]
-        if j >= 0:
-            acc[j] += acc[i]
-            
-    return acc.reshape(ny, nx)
-
-rain_snapshot = rain.isel(valid_time=0)  # or drop time if no time dim
-cum = accumulate_rain_single(rain_snapshot.values, downstream, topo_order)
-
-cum_da = xr.DataArray(
-    cum,
-    dims=rain_snapshot.dims,
-    coords=rain_snapshot.coords,
-    name="cumulative_rainfall",
-)
 
 def accumulate_rain_single(rain_2d, downstream, topo_order):
     ny, nx = rain_2d.shape
     n = ny * nx
     rain_flat = rain_2d.ravel().astype(np.float64)
+    # Ocean cells are NaN in the monthly files. Accumulating NaN propagates it to every 
+    # cell downstream, so one ocean cell becomes a problem to the stream below it. 
+    # Convert NaNs to 0s in loop and then reverts to missing 
+    isnan = np.isnan(rain_flat)
+    rain_flat = np.where(isnan, 0.0, rain_flat)
     acc = np.zeros_like(rain_flat)
     
     for i in topo_order:
@@ -138,7 +119,7 @@ def accumulate_rain_single(rain_2d, downstream, topo_order):
         j = downstream[i]
         if j >= 0:
             acc[j] += acc[i]
-            
+    acc[isnan] = np.nan
     return acc.reshape(ny, nx)
 
 def accumulate_rain_timefirst(rain_3d, downstream, topo_order):
@@ -151,7 +132,19 @@ def accumulate_rain_timefirst(rain_3d, downstream, topo_order):
 # Process each region
 
 for region in regions:
-    sub = xr.open_dataset(f"/project/cil/gcp/climate/ERA5-LAND/processed/monthly/{region}_monthly.nc4")
+    print(f"Processing {region}...")
+
+    # transform.py writes the global domain as 8 latitude strips
+    # (one per array task). Routing needs the whole grid, so open them together.
+    # Previously one file per region:
+    # sub = xr.open_dataset(os.path.join(testdir, f"{region}_monthly.nc4"))
+    band_files = sorted(glob.glob(os.path.join(testdir, f"{region}_monthly_band*.nc4")))
+    assert len(band_files) == 8, f"expected 8 latitude strips from transform.py, found {len(band_files)}"
+    # 12-month time chunks so each year below reads only its own months.
+    # The strips are stored contiguously, so without this each strip variable
+    # is one chunk of all months and every year would re-read the full files.
+    sub = xr.open_mfdataset(band_files, combine="by_coords", chunks={"valid_time": 12})
+    assert sub.sizes["latitude"] == 1472, "latitude strips do not cover the 1472-row global grid"
     rain_sub = sub["rainfall"]  # (time, y, x)
 
     # Match sub coords to full coords
@@ -200,27 +193,53 @@ for region in regions:
     # Map those global indices to local indices
     topo_order_local = global_to_local[inside_order_global]  # shape (n_sub,)
 
-    newvars = []
-    for var in ["rainfall", "era5melt", "tempmelt"]:
-        rain_sub = sub[var]  # (time, y, x)
+    # The global 1950-2025 record is too large to route in memory at once
+    # (all months x 3 variables in float64), so route and write one year at
+    # a time. Each month is accumulated on its own (accumulate_rain_timefirst),
+    # so yearly files give the same values as a single run.
+    years = np.unique(sub["valid_time"].dt.year.values)
 
-        cum_rain_sub = xr.apply_ufunc(
-            accumulate_rain_timefirst,
-            rain_sub,
-            input_core_dims=[['valid_time', 'latitude', 'longitude']],
-            output_core_dims=[['valid_time', 'latitude', 'longitude']],
-            vectorize=False,
-            kwargs={
-                'downstream': downstream_local,
-                'topo_order': topo_order_local
-            },
-            dask='parallelized',
-            output_dtypes=[np.float64],
-        )
+    for year in years:
+        # Previously one file per region with all months:
+        # out_path = os.path.join(testdir, f"{region}_monthly_flow.nc4")
+        out_path = os.path.join(testdir, f"{region}_monthly_flow_{year}.nc4")
 
-        cum_rain_sub.name = f"{var}_flow"
-        newvars.append(cum_rain_sub)
+        # Keep finished years so a timed-out job can be resubmitted
+        # (same skip rule as transform.py)
+        if os.path.exists(out_path):
+            continue
 
-    ds_out = xr.merge(newvars)
-    ds_out.to_netcdf(os.path.join(outdir, f"{region}_monthly_flow.nc4"))
-    
+        # Load the year into memory: the strips arrive as several dask chunks
+        # along latitude, which apply_ufunc cannot take as a core dimension.
+        sub_year = sub.isel(valid_time=(sub["valid_time"].dt.year == year).values).load()
+
+        newvars = []
+        for var in ["rainfall", "era5melt", "tempmelt"]:
+            rain_sub = sub_year[var]  # (time, y, x)
+
+            cum_rain_sub = xr.apply_ufunc(
+                accumulate_rain_timefirst,
+                rain_sub,
+                input_core_dims=[['valid_time', 'latitude', 'longitude']],
+                output_core_dims=[['valid_time', 'latitude', 'longitude']],
+                vectorize=False,
+                kwargs={
+                    'downstream': downstream_local,
+                    'topo_order': topo_order_local
+                },
+                dask='parallelized',
+                output_dtypes=[np.float64],
+            )
+
+            cum_rain_sub.name = f"{var}_flow"
+            newvars.append(cum_rain_sub)
+
+        ds_out = xr.merge(newvars)
+
+        # Previously written directly: ds_out.to_netcdf(out_path)
+        # Write through a temporary file (as in transform.py) so a killed job
+        # does not leave a partial year that the skip check above would keep
+        tmp_path = out_path + ".partial"
+        ds_out.to_netcdf(tmp_path)
+        os.replace(tmp_path, out_path)
+        print(f"  Written: {out_path}")

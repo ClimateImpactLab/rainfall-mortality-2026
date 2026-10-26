@@ -1,14 +1,17 @@
 #!/bin/bash
 #SBATCH --job-name=flooding-transform
-#SBATCH --output=/home/jrising/flooding/logs/flooding-transform-%j.out
-#SBATCH --error=/home/jrising/flooding/logs/flooding-transform-%j.err
+#SBATCH --output=/project/cil/home_dirs/sarahmad/repos/rainfall-mortality-2026/hydro/diagnostics/logs/transform_%A_%a.log
+#SBATCH --error=/project/cil/home_dirs/sarahmad/repos/rainfall-mortality-2026/hydro/diagnostics/logs/transform_%A_%a.err
 #SBATCH --account=cil
-#SBATCH --partition=caslake
-#SBATCH --time=08:00:00
+#SBATCH --partition=cil
+#SBATCH --time=36:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --mem=50G
+#SBATCH --array=0-7
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=120G
 
-cd /home/jrising/flooding
-python transform.py
+cd /project/cil/home_dirs/sarahmad/repos/rainfall-mortality-2026
+source .venv/bin/activate
 
+python -u hydro/coarse/transform.py
