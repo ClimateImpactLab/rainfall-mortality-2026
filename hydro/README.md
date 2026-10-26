@@ -1,6 +1,6 @@
 # hydro
 
-This folder builds the hydrological flow variables used in the rainfall-mortality analysis. The pipeline routes ERA5-Land precipitation through a terrain-derived river network to produce spatially accumulated flow estimates, then validates those estimates against observed streamflow gauges.
+This folder builds the hydrological flow variables used in the rainfall-mortality analysis. The pipeline routes ERA5-Land precipitation through a river network to produce flow estimates, then validates those estimates against observed streamflow gauges.
 
 ## Overview
 
@@ -215,29 +215,11 @@ diagnostics/output/
 
 Figures are written as both `.pdf` and `.png`; `report.Rmd` embeds the `.png`s.
 
-`globe_monthly.nc4` is **not** covered. It exists only in the original vintage, so it cannot take part in a vintage comparison; the regional files it is merged from are all diagnosed.
-
 **`diagnostics/scripts/report.Rmd`**
 
 Reads the summary CSVs and figures for both vintages and renders them side by side, computing the ocean-masking verdict from the CSVs at render time — no number in the report is hardcoded. It also flags regions whose two vintages cover a different number of months, since raw counts are not comparable across vintages in that case.
 
 Requires `rmarkdown`, `knitr`, `kableExtra`, `dplyr`, `readr` and `pandoc`.
-
----
-
-## Extraneous scripts (superseded)
-
-| Script | Status | Reason |
-|---|---|---|
-| `coarse/getdem.py` | Superseded by `getdem_01deg.py` | Produced `composite.tif` at the wrong resolution; all downstream steps now use `composite_01deg.tif` |
-
-Removed during the 2026-09-14 diagnostics reorganization:
-
-| Script | Reason |
-|---|---|
-| `diagnostics/scripts/get_orography.py` | Superseded by `coarse/getdem_01deg.py`; used the wrong CDS product (`reanalysis-era5-single-levels` instead of `reanalysis-era5-land`) and was an early draft |
-| `diagnostics/scripts/old/check_network.py` / `.sh` | One-off D8 network validation, superseded by the basin panels in `vis_taudem.py`. Its `CITIES` and `PANELS` constants were copied into `vis_taudem.py` before removal and survive there |
-| `diagnostics/scripts/old/view_hydroshed.py` / `.sh` | HydroSHEDS reference visualization; nothing depended on it and its figures were not used in the report |
 
 ---
 
@@ -285,10 +267,6 @@ sbatch hydro/diagnostics/scripts/vis_taudem.sh
 Rscript -e 'rmarkdown::render("hydro/diagnostics/scripts/report.Rmd", \
   output_dir = "hydro/diagnostics/output/report")'
 ```
-
-`report.Rmd` tolerates missing inputs: it reports which vintages and figures it found rather than failing, so it can be rendered after a partial run.
-
-The Python scripts require `xarray`, `rioxarray`, `numpy`, `pandas`, `tqdm`, `matplotlib`, `cartopy`, `rasterio`. The TauDEM steps require the `taudem` conda environment at `/software/python-anaconda-2022.05-el8-x86_64`.
 
 ---
 

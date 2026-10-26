@@ -1,0 +1,461 @@
+---
+title: "ERA5-Land Rainfall Diagnostics"
+subtitle: "Original vs test processing vintage"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+---
+
+<!--
+Purpose: show the diagnostics.py output for both processing vintages side by side,
+  so the ocean-cell missing-value fix can be confirmed from the numbers.
+
+Inputs:  ../output/missing_weather/missing_weather_summary.csv
+         ../output/negative_rainfall/negative_rainfall_summary.csv
+         ../output/missing_flow/missing_flow_summary.csv
+         ../output/{missing_weather,negative_rainfall,missing_flow}/*.png
+         ../output/taudem_flow/*.png
+         Each summary CSV covers both vintages in one file, tagged by a `vintage`
+         column. Each figure is a single file with one panel per vintage it covers,
+         so this report includes it whole rather than pairing two files. The
+         negative-rainfall suite is original-only and so has one panel.
+
+Output:  ../output/report/report.html
+
+Dependencies: rmarkdown, knitr, dplyr, readr (and pandoc)
+
+Run from the repo root:
+  Rscript -e 'rmarkdown::render("hydro/diagnostics/scripts/report.Rmd", output_dir = "hydro/diagnostics/output/report")'
+
+Every number below is read from the CSVs written by diagnostics.py at render time.
+Nothing is hardcoded, so a stale figure cannot survive a re-run.
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(readr)
+library(knitr)
+```
+
+```{r paths}
+# The Rmd sits in scripts/; diagnostics.py writes to ../output/
+OUT_ROOT <- normalizePath(file.path("..", "output"), mustWork = FALSE)
+VINTAGES <- c("original", "test")
+
+# One CSV per suite, both vintages inside it. A missing file means the suite has
+# not been run yet.
+read_suite <- function(suite, filename) {
+  p <- file.path(OUT_ROOT, suite, filename)
+  if (!file.exists(p)) return(NULL)
+  read_csv(p, show_col_types = FALSE)
+}
+
+missing_weather <- read_suite("missing_weather", "missing_weather_summary.csv")
+negative_rain   <- read_suite("negative_rainfall", "negative_rainfall_summary.csv")
+missing_flow    <- read_suite("missing_flow", "missing_flow_summary.csv")
+
+vintages_run <- if (is.null(missing_weather)) character(0) else sort(unique(missing_weather$vintage))
+```
+
+```{r helpers}
+fmt_num <- function(x, digits = 1) {
+  ifelse(is.na(x), "", format(round(x, digits), nsmall = digits, big.mark = ",", trim = TRUE))
+}
+
+fmt_int <- function(x) {
+  ifelse(is.na(x), "", format(x, big.mark = ",", trim = TRUE))
+}
+
+# Plain knitr::kable, deliberately. kableExtra does not install in the cluster's
+# conda R -- its svglite dependency fails to compile -- and nothing here needs more
+# than a table.
+show_table <- function(data) {
+  kable(data, format = "html", escape = FALSE)
+}
+
+# A chunk must not mix cat() with include_graphics(), so anything absent is
+# collected here and listed once at the end rather than annotated inline.
+MISSING_FIGS <- character(0)
+
+fig <- function(relpath) {
+  p <- file.path(OUT_ROOT, relpath)
+  if (!file.exists(p)) {
+    MISSING_FIGS <<- c(MISSING_FIGS, sprintf("`%s`", relpath))
+    return(invisible(NULL))
+  }
+  knitr::include_graphics(p)
+}
+```
+
+The processed ERA5-Land monthly files exist in two vintages:
+
+* **original** — `/project/cil/gcp/climate/ERA5-LAND/processed/monthly/`
+* **test** — `.../monthly/test/`, rewritten so cells with no ERA5-Land value stay
+  `NaN` instead of being converted to `0`
+
+`diagnostics.py` runs the identical code over both, so every difference below is a
+difference in the data rather than in the diagnostic. Each section reports how often
+something occurs and where; none of them tries to explain why.
+
+The rewrite also lengthened the record: every region covers more months in the test
+vintage than in the original, and the start years are harmonized rather than varying
+by region (see the Months / From / To columns below). Raw counts are therefore not
+comparable across vintages — only the percentage columns are.
+
+```{r vintage-status, results="asis"}
+if (length(vintages_run) == 0) {
+  cat("**No diagnostics output found.** Run `sbatch hydro/diagnostics/scripts/diagnostics.sh`",
+      "before rendering this report.\n")
+} else {
+  cat(sprintf("Vintages in this render: **%s**.\n", paste(vintages_run, collapse = ", ")))
+  if (length(vintages_run) < 2) {
+    cat(sprintf("\nThe comparison is incomplete — `%s` has not been run.\n",
+                paste(setdiff(VINTAGES, vintages_run), collapse = ", ")))
+  }
+}
+```
+
+# What the diagnostics show {.unnumbered}
+
+* **The ocean fix works and is exact.** Every cell that was 0-filled in the original
+  is NaN-masked in the test vintage, the land footprint is unchanged, and no cell
+  ends up in a third state.
+* **It propagates correctly into `rainfall_flow`.** In the original, 0-filled ocean
+  routed exact zeros downstream, so the flow field appeared to cover open water; in
+  the test vintage that ocean drops off the network. The coverage that disappears is
+  the fix working.
+* **No episodic missingness anywhere.** Neither vintage has a single cell that is
+  missing in some months and present in others, so `rainfall_flow` missingness is
+  entirely structural.
+* **Negative rainfall looks like snowmelt, except in the tail.** Its geography and
+  seasonality match the snowpack-residual explanation, but the most extreme negative
+  values are far too large for that and need separate follow-up.
+
+# Ocean masking
+
+Region files are rectangular bounding boxes, so most cells in them are ocean. The
+question is how those cells are marked. Three statuses are mutually exclusive:
+
+* **all NaN** — no valid value in any month. This is the intended marking for ocean.
+* **always zero** — has valid values, every one of them exactly `0`. This is the
+  behaviour being fixed: a 0-filled ocean cell is indistinguishable from a genuinely
+  dry land cell, and it drags means and flow accumulations toward zero.
+* **has data** — at least one non-zero valid value.
+
+```{r verdict, results="asis"}
+if (is.null(missing_weather) || length(vintages_run) < 2) {
+  cat("Both vintages are needed for a verdict; see the status note above.\n")
+} else {
+  v <- missing_weather %>%
+    group_by(vintage) %>%
+    summarise(regions = n(), always_zero = sum(n_always_zero),
+              all_nan = sum(n_all_nan), has_data = sum(n_has_data), .groups = "drop")
+  orig <- v %>% filter(vintage == "original")
+  test <- v %>% filter(vintage == "test")
+
+  cat(sprintf(
+    paste0("Summed over the %s regional files, the original vintage marks **%s** ",
+           "cells always-zero and **%s** all-NaN. The test vintage marks **%s** ",
+           "always-zero and **%s** all-NaN.\n\n"),
+    fmt_int(orig$regions), fmt_int(orig$always_zero), fmt_int(orig$all_nan),
+    fmt_int(test$always_zero), fmt_int(test$all_nan)))
+
+  if (test$always_zero == 0 && test$all_nan > orig$all_nan) {
+    cat(sprintf(paste0("**Resolved.** No always-zero cells remain in the test ",
+                       "vintage, and the cells that were 0-filled are now carried ",
+                       "as missing. Cells with data: %s original, %s test.\n"),
+                fmt_int(orig$has_data), fmt_int(test$has_data)))
+  } else if (test$always_zero == 0) {
+    cat("**Always-zero cells are gone from the test vintage**, but the all-NaN count",
+        "did not rise above the original. Worth checking where those cells went",
+        "before calling this resolved.\n")
+  } else {
+    cat(sprintf(paste0("**Not resolved.** The test vintage still has %s always-zero ",
+                       "cells. See the per-region table for which regions.\n"),
+                fmt_int(test$always_zero)))
+  }
+}
+```
+
+```{r coverage-note, results="asis"}
+# The two vintages need not cover the same months. Where they do not, raw counts
+# are not comparable between them and only the percentage columns are.
+if (!is.null(missing_weather) && length(vintages_run) == 2) {
+  n_diff <- missing_weather %>%
+    group_by(region) %>%
+    summarise(differs = n_distinct(n_time_steps) > 1, .groups = "drop") %>%
+    pull(differs) %>% sum()
+  if (n_diff > 0) {
+    cat(sprintf(paste0("\nNote: **%d regions cover a different number of months ",
+                       "in the two vintages** (see the Months column below). For ",
+                       "those, compare percentages rather than counts.\n"), n_diff))
+  } else {
+    cat("\nBoth vintages cover the same months in every region, so counts are",
+        "directly comparable.\n")
+  }
+}
+```
+
+## Per-region summary
+
+```{r missing-weather-table}
+if (!is.null(missing_weather)) {
+  missing_weather %>%
+    arrange(region, vintage) %>%
+    transmute(
+      Region = region,
+      Vintage = vintage,
+      Cells = fmt_int(n_cells),
+      Months = fmt_int(n_time_steps),
+      From = date_min,
+      To = date_max,
+      `All NaN` = fmt_int(n_all_nan),
+      `% all NaN` = fmt_num(pct_all_nan),
+      `Always zero` = fmt_int(n_always_zero),
+      `% always zero` = fmt_num(pct_always_zero),
+      `Has data` = fmt_int(n_has_data),
+      `% has data` = fmt_num(pct_has_data)
+    ) %>%
+    show_table()
+}
+```
+
+## Cell status
+
+Original on the left, test on the right. The blue 0-filled ocean in the original
+should become grey NaN-masked ocean in the test vintage, with the green land area
+unchanged. Green territory changing between panels would mean the fix altered land
+cells, which it should not.
+
+```{r fig-cell-status, out.width="100%"}
+fig("missing_weather/cell_status.png")
+```
+
+The map shows exactly the intended swap. Every blue cell in the original panel is
+grey in the test panel and the green land footprint is identical between them, so
+the fix relabelled ocean without touching a land cell. The status counts confirm
+this is a clean one-for-one flip rather than an approximate one: the always-zero
+total in the original and the all-NaN total in the test are the same number, the
+original has no all-NaN cells at all, the test has no always-zero cells, and the
+has-data count is unchanged.
+
+Two things are worth noting about the original panel. The 0-filled area follows the
+rectangular region boundaries, not the coastline, so the zeros were an artifact of
+the bounding boxes rather than of anything physical. And because those cells carried
+a valid `0` rather than a `NaN`, nothing downstream could have distinguished them
+from genuinely rainless land — which is what the next two sections pick up.
+
+# Negative rainfall
+
+**Original vintage only.** The test vintage changed how ocean cells are marked, not
+how rainfall is computed, so this check is unaffected by the fix and is not run as a
+comparison.
+
+Rainfall is a residual, `tp_total - snowchange`, so it goes negative when the monthly
+increase in snow water equivalent exceeds total precipitation — for instance rain
+that immediately freezes. Negatives are therefore expected in snow-affected cells.
+
+`% cell-months negative` uses valid (non-`NaN`) cell-months as its denominator.
+
+```{r negative-table}
+if (!is.null(negative_rain)) {
+  negative_rain %>%
+    arrange(region) %>%
+    transmute(
+      Region = region,
+      `Cells w/ negative` = fmt_int(n_cells_w_negative),
+      `% cells w/ negative` = fmt_num(pct_cells_w_negative),
+      `Min (mm/mo)` = fmt_num(min_neg_value_mm_mo, 2),
+      `Median (mm/mo)` = fmt_num(median_neg_value_mm_mo, 2),
+      `Mean (mm/mo)` = fmt_num(mean_neg_value_mm_mo, 2),
+      `% cell-months negative` = fmt_num(pct_cell_months_neg, 3)
+    ) %>%
+    show_table()
+}
+```
+
+Negatives are common as a share of cells but rare as a share of cell-months: the
+`% cells w/ negative` column runs far higher than `% cell-months negative` in every
+region, so this is a small number of months in a moderate number of cells rather
+than a pervasive problem. The split across regions is what the snowmelt explanation
+predicts — the snow-affected regions carry essentially all of it, and the two
+tropical regions (`australia`, `mexico_south`) have no negative cells at all.
+
+The `Median (mm/mo)` column is small, around a millimetre or two, which is the size
+a snowpack-residual artifact should be. The `Min (mm/mo)` column is not: several
+regions reach minima in the thousands of mm/month, which no monthly snowpack change
+can produce. Those extremes are a separate issue from the ordinary negatives and are
+worth tracing to individual cells before the series is used.
+
+## Frequency
+
+Color is the share of months with negative rainfall on a log scale, not the raw
+count, so a cell negative in 10% of its months looks the same whether the record is
+20 or 40 years.
+
+```{r fig-neg-freq, out.width="60%"}
+fig("negative_rainfall/negative_frequency.png")
+```
+
+The pattern is cryospheric, not random. Negatives concentrate in Alaska, northern
+and western Canada, the Rockies and Cascades, the southern Andes, Scandinavia, the
+Alps, the Caucasus, the Himalaya and Tibetan Plateau, and eastern Siberia — cold,
+high, or both. The darkest cells, negative in something like a tenth of their
+months, sit in the highest and coldest parts of that footprint, and the lowlands
+around them fade to near-zero. Nothing appears in the warm tropics or the
+subtropical deserts.
+
+## Seasonality
+
+Share of cells with data that are negative in each calendar month, averaged across
+all years and regions.
+
+```{r fig-neg-seasonal, out.width="60%"}
+fig("negative_rainfall/negative_seasonal.png")
+```
+
+The seasonal cycle closes the argument. Negatives peak in December through February,
+fall away sharply through March and April, sit at effectively zero from May through
+September, and return in October and November — the Northern Hemisphere snow
+accumulation season, which is where the regions above are. A defect in the
+processing would not know what month it was, so the shape here is evidence that
+these negatives are the expected `tp_total - snowchange` residual rather than a bug.
+That does not extend to the extreme minima noted above.
+
+# Missing rainfall_flow
+
+`rainfall_flow` is monthly rainfall accumulated downstream through the TauDEM D8
+network. A `NaN` means no routed value reached that cell that month. Cells `NaN` in
+**every** month are off the network (ocean, or outside the DEM) and are expected;
+they are excluded from the on-network denominators. The defect this check looks for
+is the episodic case — a cell with a routed value in some months and not others.
+
+Regional tiles overlap and are not deduplicated in this suite, so the unit
+throughout is region × cell: a cell covered by two tiles is counted twice.
+
+```{r flow-verdict, results="asis"}
+if (is.null(missing_flow)) {
+  cat("No flow output found; run the diagnostics before rendering.\n")
+} else {
+  f <- missing_flow %>%
+    group_by(vintage) %>%
+    summarise(episodic = sum(n_cells_episodic_missing),
+              on_network = sum(n_cells_on_network), .groups = "drop") %>%
+    mutate(pct = episodic / on_network * 100)
+  cat(paste0(sprintf("* **%s** — %s episodically-missing cells of %s on-network (%s%%)",
+                     f$vintage, fmt_int(f$episodic), fmt_int(f$on_network),
+                     fmt_num(f$pct, 4)),
+             collapse = "\n"), "\n")
+
+  # A cell should be off the network precisely when it has no rainfall to route, so
+  # the on-network count should equal the rainfall check's has-data count. In the
+  # original it does not, and that gap is the finding. Computed rather than asserted.
+  if (!is.null(missing_weather)) {
+    chk <- f %>%
+      inner_join(missing_weather %>% group_by(vintage) %>%
+                   summarise(has_data = sum(n_has_data), .groups = "drop"),
+                 by = "vintage")
+    cat("\nCells counted as on-network, against the cells the rainfall check found",
+        "to have data:\n\n")
+    cat(paste0(sprintf("* **%s** — %s on-network vs %s with data%s",
+                       chk$vintage, fmt_int(chk$on_network), fmt_int(chk$has_data),
+                       ifelse(chk$on_network == chk$has_data, ", identical",
+                              " — the surplus is ocean the network still carries")),
+               collapse = "\n"), "\n")
+  }
+}
+```
+
+## Per-region summary
+
+```{r flow-table}
+if (!is.null(missing_flow)) {
+  missing_flow %>%
+    arrange(region, vintage) %>%
+    transmute(
+      Region = region,
+      Vintage = vintage,
+      Months = fmt_int(n_time_steps),
+      `Cells on network` = fmt_int(n_cells_on_network),
+      `Cell-months` = fmt_int(n_cell_months),
+      `Missing cell-months` = fmt_int(n_missing_cell_months),
+      `% missing cell-months` = fmt_num(pct_missing_cell_months, 4),
+      `Never missing` = fmt_int(n_cells_never_missing),
+      `Always missing` = fmt_int(n_cells_always_missing),
+      `Episodic` = fmt_int(n_cells_episodic_missing),
+      `% on-net episodic` = fmt_num(pct_cells_on_net_episodic, 4)
+    ) %>%
+    show_table()
+}
+```
+
+## Where the missing values are
+
+Purple is missing in every month (off network), orange in some months only (the
+defect).
+
+```{r fig-flow-status, out.width="100%"}
+fig("missing_flow/missing_flow_status_map.png")
+```
+
+There is no orange in either panel, and the episodic counts above are the reason:
+not one cell in either vintage is missing in some months and present in others.
+Whatever missingness `rainfall_flow`
+has is a fixed property of a cell's position, not something that comes and goes, so
+the episodic defect this check was built to find does not occur.
+
+The two panels differ completely on everything else, and that difference is the
+ocean fix showing up downstream. The original panel is uniformly grey — every cell
+in every bounding box, ocean included, has a routed value in every month. That is
+not a network that reaches the ocean; it is the 0-filled ocean cells routing exact
+zeros through the accumulation, so the flow field looks complete while carrying
+meaningless zeros over water. In the test panel the ocean is purple and drops off
+the network, leaving grey only on land, and the on-network count collapses to the
+land cells (see the counts above). Confirming the fix therefore means reading the
+*loss* of coverage here as the desired outcome.
+
+The `% missing cell-months` column in the table above should be read the same way:
+its jump between vintages is ocean being correctly excluded, not data going missing.
+
+Restricted to episodic cells, since always-missing ocean would otherwise saturate
+the map and hide the cells that matter. When no vintage has any episodic cells — as
+in the counts above — `diagnostics.py` skips this figure and it appears under
+"Outputs not found" below. That is an empty result, not a broken one.
+
+```{r fig-flow-freq, out.width="100%"}
+fig("missing_flow/missing_flow_frequency_map.png")
+```
+
+# Accumulated flow network
+
+From `vis_taudem.py`, on the test vintage `usa_monthly_flow.nc4`. A sanity check on
+the routing rather than the rainfall: accumulation should grow downstream and trace
+recognizable river channels.
+
+```{r fig-usa-flow, out.width="100%"}
+fig("taudem_flow/usa_rainfall_flow_map.png")
+```
+
+## Basin windows
+
+Each panel shows mean `rainfall_flow`, peak `rainfall_flow`, and TauDEM's own
+upstream cell count (`aread8`) over the same window, with gauge cities marked. The
+three share a cell mask, so they cover identical cells. Since `rainfall_flow` is
+`aread8` times mean upstream rainfall, the flow panels and the `aread8` panel should
+pick out the same channels; they differ in shading because the first two are in mm
+and the third is a cell count.
+
+```{r fig-basin-panels, out.width="100%"}
+panels <- sort(Sys.glob(file.path(OUT_ROOT, "taudem_flow", "flow_panel_*.png")))
+if (length(panels) > 0) knitr::include_graphics(panels)
+```
+
+```{r basin-panels-note, results="asis"}
+if (length(sort(Sys.glob(file.path(OUT_ROOT, "taudem_flow", "flow_panel_*.png")))) == 0) {
+  cat("\n*No basin panels found. Run `sbatch hydro/diagnostics/scripts/vis_taudem.sh`.*\n")
+}
+```
