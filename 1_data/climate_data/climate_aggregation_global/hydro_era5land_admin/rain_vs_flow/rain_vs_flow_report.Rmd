@@ -1,0 +1,363 @@
+---
+title: "Rainfall vs. rainfall_flow in U.S. counties"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    fig_caption: true
+---
+
+```{r setup, include=FALSE}
+# Report on 01_rain_vs_flow_figures.R and 02_rain_vs_flow_maps.R. Reads their
+# figures and tables only; run both scripts first. Every number in the text
+# is computed from their tables.
+#
+# Inputs:  output/figures/hydro/rain_vs_flow/*.png
+#          output/data/hydro/rain_vs_flow/{county_summary,group_summary,
+#            seasonal_correlation,seasonal_profile,annual_county,
+#            annual_correlation,annual_variance_share,event_ranks,
+#            case_timeseries}.csv
+# Output:  rain_vs_flow_report.html, next to this file. Figures are embedded,
+#          so the file opens on its own in a browser.
+# Dependencies: dplyr, readr, tidyr, knitr, rmarkdown (pandoc, no LaTeX)
+#
+# Render from this folder on Midway:
+#   Rscript -e 'rmarkdown::render("rain_vs_flow_report.Rmd")'
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, out.width = "100%")
+
+library(dplyr)
+library(readr)
+library(tidyr)
+library(knitr)
+```
+
+```{css, echo = FALSE}
+/* Number figures and tables in order ("Figure 1.", "Table 1.") at the start
+   of each caption. Figures are numbered through their captions, so every
+   figure and table needs one. */
+body { counter-reset: figure table; }
+.figure .caption::before, figcaption::before {
+  counter-increment: figure;
+  content: "Figure " counter(figure) ". ";
+}
+table caption::before {
+  counter-increment: table;
+  content: "Table " counter(table) ". ";
+}
+.figure .caption::before, figcaption::before, table caption::before {
+  color: #0b0b0b;
+  font-weight: bold;
+}
+/* Light-green label for the figures and tables to show the PI. Wrap a
+   chunk in ::: {.pi-highlight} ... ::: to highlight its label. */
+.pi-highlight .caption::before, .pi-highlight figcaption::before, .pi-highlight caption::before {
+  background-color: #d9f2d0;
+  padding: 2px 6px;
+}
+```
+
+```{r paths}
+USER <- Sys.getenv("USER")
+source("../../../../../0_utils/paths.R")
+
+fig_dir <- file.path(DIR_FIGURE, "hydro", "rain_vs_flow")
+table_dir <- file.path(DIR_REPO_RAINFALL_MORTALITY, "output", "data", "hydro", "rain_vs_flow")
+```
+
+```{r read-data}
+county <- read_csv(file.path(table_dir, "county_summary.csv"), show_col_types = FALSE)
+groups <- read_csv(file.path(table_dir, "group_summary.csv"), col_types = cols(group = "c"))
+annual <- read_csv(file.path(table_dir, "annual_correlation.csv"), col_types = cols(group = "c"))
+variance <- read_csv(file.path(table_dir, "annual_variance_share.csv"), col_types = cols(group = "c"))
+annual_county <- read_csv(file.path(table_dir, "annual_county.csv"), show_col_types = FALSE)
+ranks <- read_csv(file.path(table_dir, "event_ranks.csv"), show_col_types = FALSE)
+seasonal <- read_csv(file.path(table_dir, "seasonal_correlation.csv"), show_col_types = FALSE)
+profile <- read_csv(file.path(table_dir, "seasonal_profile.csv"), show_col_types = FALSE)
+case_ts <- read_csv(file.path(table_dir, "case_timeseries.csv"), show_col_types = FALSE)
+
+# Format numbers for the text and tables
+fmt <- function(x, digits = 2) {
+  vapply(x, function(v) format(signif(v, digits), big.mark = ",", scientific = FALSE, trim = TRUE), "")
+}
+fmt_r <- function(x) sprintf("%.2f", x)
+fmt_pct <- function(x) sprintf("%.0f%%", 100 * x)
+
+group_names <- c("1" = "Low", "2" = "Middle", "3" = "High", "all" = "All counties")
+
+# Drought and flood years: a county's lowest and highest 10% of years. Must
+# match extreme_year_share in 01_rain_vs_flow_figures.R.
+extreme_year_share <- 0.10
+
+all_counties <- filter(groups, group == "all")
+low <- filter(groups, group == "1")
+mid <- filter(groups, group == "2")
+high <- filter(groups, group == "3")
+
+# Median county value from the annual table, by measure and group ("1", "2",
+# "3", "all"); `column` can also be "p10" or "p90"
+annual_value <- function(m, g, column = "median") annual[[column]][annual$measure == m & annual$group == g]
+annual_r <- function(m, g) fmt_r(annual_value(m, g))
+annual_pct <- function(m, g) fmt_pct(annual_value(m, g))
+
+# Low-group counties where rainfall leaves more than half of the flood measure
+# unexplained, and whether their flow peaks in a different month (a sign of
+# snow, since these counties have little upstream water)
+low_flood <- annual_county %>%
+  filter(group == 1) %>%
+  inner_join(select(county, region_id, peak_shift), by = "region_id") %>%
+  mutate(far = unexplained_flood > 0.5)
+
+# Share of the pooled within-county variance of raw annual levels, by group
+# ("1", "2", "3", "top 1%") and series ("rain", "flowmean", "flowmax")
+variance_pct <- function(g, series) fmt_pct(variance[[series]][variance$group == g])
+
+# Median county correlation by calendar month, for a group ("Low", "Middle", "High")
+season_r <- function(g, months) {
+  seasonal$corr_median[startsWith(seasonal$label_short, g) & seasonal$cal_month %in% months]
+}
+
+# Median county share of the year in one calendar month, as a percentage
+profile_pct <- function(g, series, month) {
+  sprintf("%.1f", 100 * profile$share_median[
+    startsWith(profile$label_short, g) & profile$series == series & profile$cal_month == month
+  ])
+}
+
+# One row per event and county with rainfall and flow side by side, in the
+# order of event_ranks.csv (events as in the figures, counties upstream to
+# downstream)
+ranks_wide <- ranks %>%
+  mutate(series = recode(series, "Rainfall" = "rain", "rainfall_flow" = "flow")) %>%
+  select(event, county, series, rank, ratio_to_median, n_years) %>%
+  pivot_wider(names_from = series, values_from = c(rank, ratio_to_median, n_years))
+
+n_flow_higher <- sum(ranks_wide$rank_flow < ranks_wide$rank_rain)
+n_tie <- sum(ranks_wide$rank_flow == ranks_wide$rank_rain)
+
+# Rank or ratio to median for one case-study county
+rank_of <- function(name, series) ranks_wide[[paste0("rank_", series)]][ranks_wide$county == name]
+ratio_of <- function(name, series) {
+  sprintf("%.1f", ranks_wide[[paste0("ratio_to_median_", series)]][ranks_wide$county == name])
+}
+
+# One county-month in the case time series, relative to the county's mean
+# month ("rain" or "flow")
+rel_of <- function(name, month, series) {
+  sprintf("%.1f", case_ts[[paste0(series, "_rel")]][case_ts$county == name & case_ts$month == month])
+}
+```
+
+# Summary
+
+In most of the country, flow is the same as rainfall. 
+In the top third of counties by upstream ratio (mean flow/mean rainfall), 
+it is slightly different, and affects the flood measure (annual max) more 
+than the drought measure (annual mean).
+From these figures, it looks like rainfal flow captures upstream rainfall 
+from outside of county boundaries and the timing of snowmelt.
+
+::: {.pi-highlight}
+
+```{r table-thirds}
+# Median county correlation of flow with rainfall, by upstream-ratio third:
+# monthly series, drought measures (annual mean) and flood measures (annual
+# max), each pair built the same way from the county's monthly series
+annual_median <- annual %>%
+  filter(measure %in% c("corr_drought", "corr_flood")) %>%
+  select(group, measure, median) %>%
+  pivot_wider(names_from = measure, values_from = median)
+
+groups %>%
+  inner_join(annual_median, by = "group") %>%
+  transmute(
+    `Upstream-ratio third` = group_names[group],
+    Counties = fmt(n_counties, 4),
+    `Upstream ratio` = paste0(fmt(ratio_min), " to ", fmt(ratio_max), " (median ", fmt(ratio_median), ")"),
+    `Monthly flow vs. monthly rainfall` = fmt_r(corr_median),
+    `Drought measure` = fmt_r(corr_drought),
+    `Flood measure` = fmt_r(corr_flood)
+  ) %>%
+  kable(
+    align = "lrrrrr",
+    caption = paste(
+      "Correlation of rainfall_flow with rainfall, median county in each upstream-ratio tertile.",
+      "Thirds: counties ranked by upstream ratio (mean flow / mean rainfall)",
+      "and split into tertiles. The monthly column is the correlation",
+      "over each county's own months. The drought and flood columns are correlations over",
+      "each county's years 1950-2025 of the flow and rainfall drought measures (annual mean",
+      "of the monthly values) and flood measures (annual max: the biggest monthly value)."
+    )
+  )
+```
+
+:::
+
+**Where they are similar**
+
+- **Counties with little upstream water.** In the low upstream-ratio group,
+  the median county correlation is
+  `r annual_r("corr_drought", "1")` between the flow and rainfall drought
+  measures (annual mean), and `r annual_r("corr_flood", "1")` between the flow
+  and rainfall flood measures (annual max). 
+- **Month to month, in most of the East and South.** The median county
+  correlation of the raw monthly series is
+  `r fmt_r(all_counties$corr_median)` (`r fmt_r(low$corr_median)` in the low
+  group).
+
+**Where they are different**
+
+- **Along large rivers.** 
+- **In snowy regions.** Flow counts snow when it melts, rainfall when it
+  falls, so the flood measure picks up the spring melt.
+  - In
+    `r fmt_pct(mean(low_flood$peak_shift[low_flood$far] != 0))` of them flow
+    peaks in a different month from rainfall
+    (`r fmt_pct(mean(low_flood$peak_shift[!low_flood$far] != 0))` for the
+    rest of the group).
+
+**What flow tells you that rainfall can't**
+
+- **Water from outside the county.** A wet year upstream reaches a
+  downstream county even when its own rain is typical.
+- **Floods more than droughts.** 
+
+**Flood case studies**
+
+- Four hand-picked flood cases that are known river or rain floods.
+- Flow ranks the flood at least as high as rainfall in
+    `r n_flow_higher + n_tie` of `r nrow(ranks_wide)` county cases, and
+    strictly higher in `r n_flow_higher`.
+- Hurricane Harvey, a local-rain flood, ranks first in both which makes sense 
+because there's not a lot of upstream water to add. 
+
+# The two variables
+
+**Rainfall** is the precipitation used in the mortality analysis
+(`prcp_pop_p1`). It is ERA5-Land `tp_total`: the population-weighted county
+mean of daily totals, summed over the month, in mm. It is built by
+`era5land_admin/aggregation_scripts/02_aggregate_prcp_temp.py`. 
+
+**rainfall_flow** (`flow_pop`) routes that water downstream. Each grid cell
+gets its own rainfall plus the rainfall of every cell upstream of it on a D8
+river network (`hydro/coarse/prepflow.py`). The county value is the
+population-weighted mean over the county's cells, using the same weights as
+rainfall. It is built by `hydro_era5land_admin/01_aggregate_monthly_flow.py`.
+
+# Across geography
+
+```{r fig-maps, fig.cap = "Mean monthly rainfall, mean monthly rainfall_flow, upstream ratio, and correlation of the two monthly series, by county. Lower 48 states."}
+include_graphics(file.path(fig_dir, "1_county_maps.png"))
+```
+
+- **Flow and the upstream ratio trace the river network.** 
+- **The correlation is close to 1 across most of the East and South.**
+- **It is lowest in two kinds of places:**
+  - In snowy regions: the interior Pacific Northwest and northern Rockies,
+    parts of the Great Basin and central Rockies, and northern New England.
+  - Along large rivers, like the lower Mississippi.
+
+```{r fig-where, fig.cap = "Correlation of monthly rainfall and rainfall_flow, and share of flow-extreme months that are not rainfall-extreme, against the upstream ratio."}
+include_graphics(file.path(fig_dir, "2_where_flow_differs.png"))
+```
+
+- **Low group (less upstream water): very similar.** The
+  median county in the low group has a correlation of
+  `r fmt_r(low$corr_median)`. Only `r fmt_pct(low$missed_median)` of its
+  flow-extreme months are not rainfall-extreme.
+- **High group (high upstream water): the correlation falls and the extremes diverge.** The median
+  correlation is `r fmt_r(high$corr_median)`, and
+  `r fmt_pct(high$missed_median)` of the months that flow flags as extreme are
+  not extreme in local rainfall.
+- **Snow outliers.** A few counties have a correlation near or below zero even
+  at modest upstream ratios. 
+
+```{r table-groups}
+groups %>%
+  transmute(
+    `Upstream ratio group` = group_names[group],
+    Counties = n_counties,
+    `Ratio range` = paste(fmt(ratio_min), "to", fmt(ratio_max)),
+    `Median county r` = fmt_r(corr_median),
+    `Flow extremes missed by rainfall (median county)` = fmt_pct(missed_median),
+  ) %>%
+  kable(
+    align = "lrrrrrr",
+    caption = paste(
+      "Raw monthly series by upstream-ratio group. County r: one correlation per county.",
+      "Flow extremes missed: share of a county's top-5% flow months that are not in its",
+      "top-5% rainfall months."
+    )
+  )
+```
+
+# Across time
+
+```{r fig-seasonal, fig.cap = "Correlation of rainfall and rainfall_flow by calendar month, median county in each upstream-ratio group."}
+include_graphics(file.path(fig_dir, "3_seasonal_correlation.png"))
+```
+
+- **Low group (little upstream water).**
+  - The median correlation is at least
+    `r sprintf("%.3f", min(season_r("Low", 5:10)))` from May to October.
+  - It falls to `r sprintf("%.3f", season_r("Low", 1))` in January and
+    `r sprintf("%.3f", season_r("Low", 2))` in February.
+- **High group.**
+  - The median correlation is `r fmt_r(min(season_r("High", 1:4)))` to
+    `r fmt_r(max(season_r("High", 1:4)))` in January-April, and
+    `r fmt_r(min(season_r("High", 5:10)))` to
+    `r fmt_r(max(season_r("High", 5:10)))` in May-October.
+
+```{r fig-profile, fig.cap = "Share of the year's rainfall and rainfall_flow in each calendar month, median county in each upstream-ratio group."}
+include_graphics(file.path(fig_dir, "4_seasonal_profile.png"))
+```
+
+- The seasonal cycles match where there is little upstream water,
+and diverge where there is a lot.
+- That fits snow building up over the larger, snowier upstream basins in
+    winter and melting in spring.
+
+```{r fig-shift, fig.cap = "Months from the rainfall peak month to the rainfall_flow peak month, by county."}
+include_graphics(file.path(fig_dir, "5_peak_shift_map.png"))
+```
+
+# Flood case studies
+
+These cases show whether flow picks up floods that local rainfall
+misses. These are four large floods that I hand picked. Each
+event has a set of counties, flood months and an expected driver, from the
+historical record rather than from data.
+
+- **2011 Missouri River flood** (May-Aug), expected driver upstream flow.
+  Burleigh ND, Woodbury IA, Pottawattamie IA, Buchanan MO.
+- **2019 Missouri River flood** (Mar-Jun), expected driver upstream flow.
+  Dodge NE, Douglas NE, Fremont IA, Holt MO.
+- **1993 Great Flood** (Jun-Aug), expected driver both rain and flow.
+  Polk IA, Adams IL, St. Charles MO, St. Louis city MO.
+- **2017 Hurricane Harvey** (Aug), a contrast case expected to be driven by
+  local rain. Fort Bend, Harris, Galveston and Jefferson TX.
+
+::: {.pi-highlight}
+
+```{r fig-timeseries, fig.cap = "Monthly rainfall and rainfall_flow around each flood, each relative to the county's mean month. One example county per event. Shaded: flood months."}
+include_graphics(file.path(fig_dir, "7_case_timeseries.png"))
+```
+
+:::
+
+```{r table-ranks}
+ranks %>%
+  mutate(series = recode(series, "Rainfall" = "rain", "rainfall_flow" = "flow")) %>%
+  select(event, county, series, rank, ratio_to_median, n_years) %>%
+  pivot_wider(names_from = series, values_from = c(rank, ratio_to_median, n_years)) %>%
+  transmute(
+    Event = event,
+    County = county,
+    `Rain rank` = paste0(rank_rain, " / ", n_years_rain),
+    `Flow rank` = paste0(rank_flow, " / ", n_years_flow)
+  ) %>%
+  kable(
+    align = "llrrrr",
+    caption = "Flood-month totals for all case-study counties: rank of the event year among 1950-2025 (1 = highest) and total relative to the county's median year. Counties listed upstream to downstream."
+  )
+```

@@ -1,0 +1,233 @@
+---
+title: "Rainfall vs. rainfall_flow worldwide"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+    fig_caption: true
+---
+
+```{r setup, include=FALSE}
+# Global companion to rain_vs_flow_report.Rmd (US counties). Reads the
+# figures and tables of 04_global_figures.R and the US tables of
+# 01_rain_vs_flow_figures.R; run 03_global_cell_stats.py (all bands) and
+# 04_global_figures.R first. Every number in the text is computed from
+# these tables.
+#
+# Inputs:  output/figures/hydro/rain_vs_flow_global/*.png
+#          output/data/hydro/rain_vs_flow_global/{coverage,group_summary,
+#            snow_summary}.csv
+#          output/data/hydro/rain_vs_flow/{group_summary,
+#            annual_correlation}.csv   (US counties)
+# Output:  rain_vs_flow_global_report.html, next to this file. Figures are
+#          embedded, so the file opens on its own in a browser.
+# Dependencies: dplyr, readr, tidyr, knitr, rmarkdown (pandoc, no LaTeX)
+#
+# Render from this folder on Midway:
+#   Rscript -e 'rmarkdown::render("rain_vs_flow_global_report.Rmd")'
+
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, out.width = "100%")
+
+library(dplyr)
+library(readr)
+library(tidyr)
+library(knitr)
+```
+
+```{css, echo = FALSE}
+/* Number figures and tables in order ("Figure 1.", "Table 1.") at the start
+   of each caption. Figures are numbered through their captions, so every
+   figure and table needs one. */
+body { counter-reset: figure table; }
+.figure .caption::before, figcaption::before {
+  counter-increment: figure;
+  content: "Figure " counter(figure) ". ";
+}
+table caption::before {
+  counter-increment: table;
+  content: "Table " counter(table) ". ";
+}
+.figure .caption::before, figcaption::before, table caption::before {
+  color: #0b0b0b;
+  font-weight: bold;
+}
+/* Light-green label for the figures and tables to show the PI. Wrap a
+   chunk in ::: {.pi-highlight} ... ::: to highlight its label. */
+.pi-highlight .caption::before, .pi-highlight figcaption::before, .pi-highlight caption::before {
+  background-color: #d9f2d0;
+  padding: 2px 6px;
+}
+```
+
+```{r paths}
+USER <- Sys.getenv("USER")
+source("../../../../../0_utils/paths.R")
+
+fig_dir <- file.path(DIR_FIGURE, "hydro", "rain_vs_flow_global")
+table_dir <- file.path(DIR_REPO_RAINFALL_MORTALITY, "output", "data", "hydro", "rain_vs_flow_global")
+us_table_dir <- file.path(DIR_REPO_RAINFALL_MORTALITY, "output", "data", "hydro", "rain_vs_flow")
+```
+
+```{r read-data}
+coverage <- read_csv(file.path(table_dir, "coverage.csv"), show_col_types = FALSE)
+world <- read_csv(file.path(table_dir, "group_summary.csv"), col_types = cols(group = "c"))
+snow <- read_csv(file.path(table_dir, "snow_summary.csv"), show_col_types = FALSE)
+us_groups <- read_csv(file.path(us_table_dir, "group_summary.csv"), col_types = cols(group = "c"))
+us_annual <- read_csv(file.path(us_table_dir, "annual_correlation.csv"), col_types = cols(group = "c"))
+
+# Format numbers for the text and tables
+fmt <- function(x, digits = 2) {
+  vapply(x, function(v) format(signif(v, digits), big.mark = ",", scientific = FALSE, trim = TRUE), "")
+}
+fmt_r <- function(x) sprintf("%.2f", x)
+fmt_pct <- function(x) sprintf("%.0f%%", 100 * x)
+fmt_n <- function(x) format(x, big.mark = ",", trim = TRUE)
+
+group_names <- c("1" = "Low", "2" = "Middle", "3" = "High", "all" = "All")
+
+# Median box, by weighting ("pop", "area"), group ("1", "2", "3", "all") and column
+world_value <- function(g, column, w = "pop") world[[column]][world$weights == w & world$group == g]
+
+# Median US county, same groups: monthly correlation, drought and flood
+us_value <- function(g, column) {
+  if (column == "corr_month") {
+    us_groups$corr_median[us_groups$group == g]
+  } else {
+    us_annual$median[us_annual$group == g & us_annual$measure == column]
+  }
+}
+
+# Share of US counties whose flow peaks in a different month, and their
+# median upstream ratio, by group
+us_group_value <- function(g, column) us_groups[[column]][us_groups$group == g]
+
+# Cuts between the thirds: the top of the low and middle groups
+world_cuts <- c(world_value("1", "ratio_max"), world_value("2", "ratio_max"))
+us_cuts <- us_groups$ratio_max[match(c("1", "2"), us_groups$group)]
+
+# Snow-share groups of low-third boxes, population weights
+snow_pop <- filter(snow, weights == "pop")
+snow_value <- function(label, column) snow_pop[[column]][snow_pop$snow == label]
+snowy_share <- with(snow_pop, sum(n_boxes[snow %in% c("10-30%", "Over 30%")]) / sum(n_boxes))
+
+# Largest gap between the population- and land-area-weighted medians
+weights_gap <- world %>%
+  select(weights, group, corr_month, corr_drought, corr_flood) %>%
+  pivot_longer(starts_with("corr"), names_to = "measure") %>%
+  pivot_wider(names_from = weights, values_from = value) %>%
+  summarise(gap = max(abs(pop - area))) %>%
+  pull(gap)
+```
+
+# Summary
+
+As in the U.S., flow is the same as rainfall.
+In the top third of boxes by upstream ratio (mean flow/mean rainfall),
+it is different, and affects the flood measure (annual max) more
+than the drought measure (annual mean).
+Snow affects far more of the map than rivers do: across northern Eurasia
+and Canada, the flow and rainfall flood measures barely move together.
+From these figures, it looks like rainfall_flow captures upstream rainfall
+from outside the box and the timing of snowmelt, as in the U.S.
+
+::: {.pi-highlight}
+
+```{r table-world}
+world %>%
+  filter(weights == "pop") %>%
+  transmute(
+    group,
+    `Upstream-ratio third` = group_names[group],
+    Boxes = fmt_n(n_boxes),
+    `Share of people` = fmt_pct(pop_share),
+    `Monthly: world` = fmt_r(corr_month),
+    `Monthly: US` = fmt_r(sapply(group, us_value, column = "corr_month")),
+    `Drought: world` = fmt_r(corr_drought),
+    `Drought: US` = fmt_r(sapply(group, us_value, column = "corr_drought")),
+    `Flood: world` = fmt_r(corr_flood),
+    `Flood: US` = fmt_r(sapply(group, us_value, column = "corr_flood"))
+  ) %>%
+  select(-group) %>%
+  kable(
+    align = "lrrrrrrrr",
+    caption = paste0(
+      "Correlation of rainfall_flow with rainfall, median 0.5-degree box (world) and median county (US) ",
+      "in each upstream-ratio tertile. Thirds: boxes or counties ranked by upstream ratio ",
+      "(mean flow / mean rainfall) and split into tertiles. The world thirds split at ",
+      fmt(world_cuts[1]), " and ", fmt(world_cuts[2]), ", the US thirds at ", fmt(us_cuts[1]),
+      " and ", fmt(us_cuts[2]), ". The monthly columns are the correlation over each box's or ",
+      "county's own months. The drought and flood columns are correlations over 1950-2025 of the ",
+      "flow and rainfall drought measures (annual mean of the monthly values) and flood measures ",
+      "(annual max: the biggest monthly value)."
+    )
+  )
+```
+
+:::
+
+# The comparison
+
+**Boxes.** A 0.5-degree box (5 x 5 ERA5-Land cells, roughly county-sized)
+plays the role of a US county. Rainfall (`tp_total`) and `rainfall_flow` are
+averaged over the box's cells with population weights (LandScan 2011), as for
+counties. The drought and flood measures are the annual mean and annual max
+of the box's monthly values, built the same way for both series.
+
+**Sample.** The `r fmt_n(coverage$n_boxes_compared)` boxes with people, which
+hold `r fmt_pct(coverage$pop_compared_share)` of the LandScan population
+between 57S and 84N. Maps use population weights.
+
+# Across geography
+
+```{r fig-ratio, fig.cap = "Upstream ratio (mean rainfall_flow / mean rainfall), by 0.5-degree box."}
+include_graphics(file.path(fig_dir, "G1_upstream_ratio.png"))
+```
+
+- **The upstream ratio traces the river network.** The large rivers stand
+  out: the Amazon and Paraná, the Mississippi, the Nile, Niger and Congo, the
+  Ganges, Indus, Mekong and Yangtze, and the Volga and the Siberian rivers.
+
+::: {.pi-highlight}
+
+```{r fig-drought-flood, fig.cap = "Correlation of the flow and rainfall drought measures (annual mean) and flood measures (annual max), by 0.5-degree box."}
+include_graphics(file.path(fig_dir, "G2_drought_flood.png"))
+```
+
+:::
+
+# Across time
+
+```{r fig-shift, fig.cap = "Months from the rainfall peak month to the rainfall_flow peak month, by 0.5-degree box."}
+include_graphics(file.path(fig_dir, "G3_peak_shift.png"))
+```
+
+- **Same peak month** across most of the tropics and subtropics (Africa,
+  South and Southeast Asia, China, South America, Australia).
+- **Flow peaks earlier** across northern Eurasia and southern Canada, which
+  fits spring snowmelt.
+- **Flow peaks later** in the US Pacific Northwest and the Chilean Andes,
+  which fits winter snow that melts in late spring.
+
+::: {.pi-highlight}
+
+```{r table-snow}
+snow_pop %>%
+  transmute(
+    `Snow share` = snow,
+    Boxes = fmt_n(n_boxes),
+    `Monthly flow vs. monthly rainfall` = fmt_r(corr_month),
+    `Drought measure` = fmt_r(corr_drought),
+    `Flood measure` = fmt_r(corr_flood),
+    `Flow peaks in a different month` = fmt_pct(share_peak_shifted)
+  ) %>%
+  kable(
+    align = "lrrrrr",
+    caption = paste(
+      "Correlation of rainfall_flow with rainfall, median low-third box (little upstream water)",
+      "by snow share. Snow share: the share of 1950-2025 precipitation stored as snow before it",
+      "reaches the flow input."
+    )
+  )
+```
+
+:::
