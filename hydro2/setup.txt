@@ -1,0 +1,2 @@
+git clone https://github.com/jrising/openworld.git
+git clone https://github.com/jrising/opendims.git
