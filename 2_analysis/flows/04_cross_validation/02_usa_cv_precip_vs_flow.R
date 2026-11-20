@@ -1,22 +1,25 @@
 # ============================================================
 # 02_usa_cv_precip_vs_flow.R
 #
-# Does precip or flow better explain USA mortality? State-blocked K-fold
+# Does precip or flow better explain USA mortality? State blocks, 5-fold
 # cross-validation (OLS) on the residualized panel of 01_usa_cv_residualize.R.
+# Usage: Rscript 02_usa_cv_precip_vs_flow.R [saturated|main]  (same spec as 01)
 #
 # Models, each fit on the residuals (the FE, temperature and wind are already
 # partialled out), separately for each age group:
 #   baseline  no rain term
 #   precip    residualized precip poly (order 3)
 #   flow      residualized flow poly (order 3)
-# Weights: the main regs' population weights
+# Including the main reg's population weights 
 #
 # Design:
 #   - Folds: ADM1 (state) blocks. States are shuffled at random and dealt into
 #     K_FOLDS folds; all counties and age rows of a state stay together. Follows
 #     the state-clustered SEs of the regs: errors are correlated within a state, 
 #     so a state is never split between training and held-out rows
-#   - K_FOLDS = 5, redrawn N_REPEATS = 3 times 
+#   - K_FOLDS = 5, redrawn N_REPEATS = 20 times. Stability is reported two
+#     ways: the SD across all K_FOLDS x N_REPEATS fold losses (sd_*), and the
+#     SD across the N_REPEATS repeat means (sd_repeat_*)
 #   - Loss: population-weighted out-of-sample RMSE of the residualized outcome,
 #     per age group
 #   - Paired comparison: in every fold, loss(model) - loss(baseline) and
@@ -39,10 +42,18 @@ library(tidyr)
 source("../../../0_utils/paths.R")
 
 K_FOLDS <- 5
-N_REPEATS <- 3
+N_REPEATS <- 20
 SEED <- 20261118       # the fold draw of repeat r uses SEED + r
 
-cv_dir <- file.path(DIR_REPO_RAINFALL_MORTALITY, "output", "data", "flows", "usa-annual", "cv_precip_vs_flow")
+FE_SPEC <- commandArgs(trailingOnly = TRUE)[1]
+if (is.na(FE_SPEC)) FE_SPEC <- "saturated"
+stopifnot(FE_SPEC %in% c("saturated", "main"))
+message("FE spec: ", FE_SPEC)
+
+cv_dir <- file.path(
+  DIR_REPO_RAINFALL_MORTALITY, "output", "data", "flows", "usa-annual",
+  if (FE_SPEC == "saturated") "cv_precip_vs_flow" else paste0("cv_precip_vs_flow_", FE_SPEC)
+)
 residual_file <- file.path(cv_dir, "usa_cv_residual_panel.rds")
 
 age_labels <- c("1" = "0-4", "2" = "5-64", "3" = "65+")
@@ -90,14 +101,12 @@ fold_sizes <- bind_rows(lapply(seq_len(N_REPEATS), function(r) {
 }))
 print(fold_sizes, n = Inf)
 
-
 # -----------------------------
 # Cross-validation
 # -----------------------------
 
 # Weighted RMSE: square root of the weighted mean squared error, in the units
-# of the death rate. Taken within each held-out fold (or state), so the mean
-# over folds is a mean of RMSEs, not the RMSE of all held-out rows pooled
+# of the death rate. Taken within each held-out fold (or state)
 weighted_rmse <- function(y, pred, w) sqrt(sum(w * (y - pred)^2) / sum(w))
 
 # Held-out predictions of every model; the losses are taken from them below
@@ -141,49 +150,45 @@ folds <- predictions %>%
   group_by(cv_repeat, fold, age_label, model_id) %>%
   summarise(wrmse = weighted_rmse(y_res, pred, weight), .groups = "drop")
 
-
 # -----------------------------
 # Summary
 # -----------------------------
 
+# mean_wrmse: mean over all held-out folds (K_FOLDS x N_REPEATS); sd_wrmse: SD
+# of those fold losses; sd_repeat_wrmse: SD of the N_REPEATS repeat means
 loss_summary <- folds %>%
   group_by(age_label, model_id) %>%
-  summarise(mean_wrmse = mean(wrmse), .groups = "drop")
+  summarise(
+    mean_wrmse = mean(wrmse), sd_wrmse = sd(wrmse),
+    sd_repeat_wrmse = sd(tapply(wrmse, cv_repeat, mean)), .groups = "drop"
+  )
 
 contrast_labels <- c(precip_vs_baseline = "Precip - baseline", flow_vs_baseline = "Flow - baseline", precip_vs_flow = "Precip - flow")
 
-# Paired difference in every fold. Conservative SE: the SE within each repeat,
-# then averaged over the repeats. pct_of_reference: the difference as a percent
-# of the second model's mean loss (flow for precip_vs_flow, else baseline)
+# Paired difference in every fold. 
 diff_summary <- folds %>%
   pivot_wider(names_from = model_id, values_from = wrmse) %>%
   mutate(precip_vs_baseline = precip - baseline, flow_vs_baseline = flow - baseline, precip_vs_flow = precip - flow) %>%
   pivot_longer(all_of(names(contrast_labels)), names_to = "contrast_id", values_to = "diff") %>%
-  mutate(reference = if_else(contrast_id == "precip_vs_flow", flow, baseline)) %>%
+  mutate(reference = if_else(contrast_id == "precip_vs_flow", flow, baseline))
+
+# SD of the paired difference across all K_FOLDS x N_REPEATS folds
+diff_sd_folds <- diff_summary %>%
+  group_by(age_label, contrast_id) %>%
+  summarise(sd_fold = sd(diff), .groups = "drop")
+
+diff_summary <- diff_summary %>%
   group_by(age_label, contrast_id, cv_repeat) %>%
   summarise(repeat_mean = mean(diff), repeat_se = sd(diff) / sqrt(n()), reference = mean(reference), .groups = "drop") %>%
   group_by(age_label, contrast_id) %>%
   summarise(
-    diff = mean(repeat_mean), se_diff = mean(repeat_se),
+    diff = mean(repeat_mean), se_diff = mean(repeat_se), sd_repeat = sd(repeat_mean),
     repeat_min = min(repeat_mean), repeat_max = max(repeat_mean),
     reference_wrmse = mean(reference), .groups = "drop"
   ) %>%
+  left_join(diff_sd_folds, by = c("age_label", "contrast_id")) %>%
   mutate(contrast_label = unname(contrast_labels[contrast_id]), .after = contrast_id) %>%
   mutate(pct_of_reference = 100 * diff / reference_wrmse)
-
-
-# -----------------------------
-# State-level losses (for the map)
-# -----------------------------
-
-# Each state's loss in the fold where it is held out, averaged over the repeats
-state_losses <- predictions %>%
-  group_by(adm1_code, adm1_id, age_label, model_id, cv_repeat) %>%
-  summarise(wrmse = weighted_rmse(y_res, pred, weight), .groups = "drop") %>%
-  group_by(adm1_code, adm1_id, age_label, model_id) %>%
-  summarise(wrmse = mean(wrmse), .groups = "drop") %>%
-  pivot_wider(names_from = model_id, values_from = wrmse) %>%
-  arrange(age_label, adm1_code)
 
 
 # -----------------------------
@@ -193,7 +198,6 @@ state_losses <- predictions %>%
 write_csv(folds, file.path(cv_dir, paste0("usa_cv_fold_losses_k", K_FOLDS, ".csv")))
 write_csv(loss_summary, file.path(cv_dir, paste0("usa_cv_loss_summary_k", K_FOLDS, ".csv")))
 write_csv(diff_summary, file.path(cv_dir, paste0("usa_cv_diff_summary_k", K_FOLDS, ".csv")))
-write_csv(state_losses, file.path(cv_dir, paste0("usa_cv_state_losses_k", K_FOLDS, ".csv")))
 write_csv(fold_sizes, file.path(cv_dir, paste0("usa_cv_fold_sizes_k", K_FOLDS, ".csv")))
 
 print(loss_summary, n = Inf)

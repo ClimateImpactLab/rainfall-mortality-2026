@@ -5,19 +5,26 @@
 # Regress the outcome and every rain regressor on the controls 
 # and fixed effects, save the residuals, and cross-validate on the residuals. 
 #
-# Residualized:
+# Residualized vars:
 #   outcome   deathrate_w99
 #   precip    prcp_poly_1..3  (order 3)
 #   flow      flow_poly_1..3_pop  (order 3)
-# Partialled out: temperature poly (order 2) + the 2 annual wind controls +
-# saturated FE (county x age, country x year x age, state x year x age).
+# Partialled out: temperature poly (order 2) + the 2 annual wind controls + FE.
+# The FE set is chosen by the first command-line argument (default "saturated"):
+#   saturated  county x age, country x year x age, state x year x age
+#   main       county x age, country x year x age
+# (new_panel_specs$spec_id in 00_prep_analysis_panel.R). Each spec writes to its
+# own folder, so a run of one never overwrites the other.
 # Population weights (the main regs' weights) are used in every regression.
 #
 # All terms and FE are age-specific, so the regs split exactly by age group;
 # the residualization is run separately for each age group.
 #
 # Sample: USA, 1968-2010, 3 age groups, complete cases on the variables used
-# here only (outcome, temperature, precip, flow, wind). 
+# here (outcome, temperature, precip, flow, wind). States with a single county
+# are dropped under BOTH specs (see below), so the two CVs use the same states.
+#
+# Usage: Rscript 01_usa_cv_residualize.R [saturated|main]
 #
 # ============================================================
 
@@ -57,12 +64,19 @@ PANEL_FILE <- file.path(
   DATA_DIR, "climate_data", "ERA5-LAND", "flows", "usa_annual", "usa_annual_flow_regression_panel.rds"
 )
 
+# FE spec from the command line; the saturated results keep their original folder
+FE_SPEC <- commandArgs(trailingOnly = TRUE)[1]
+if (is.na(FE_SPEC)) FE_SPEC <- "saturated"
+stopifnot(FE_SPEC %in% c("saturated", "main"))
+
 OUTPUT_DIR <- file.path(DIR_REPO_RAINFALL_MORTALITY, "output", "data", "flows", "usa-annual")
-cv_dir <- file.path(OUTPUT_DIR, "cv_precip_vs_flow")
+cv_dir <- file.path(OUTPUT_DIR, if (FE_SPEC == "saturated") "cv_precip_vs_flow" else paste0("cv_precip_vs_flow_", FE_SPEC))
 residual_file <- file.path(cv_dir, "usa_cv_residual_panel.rds")
 dir.create(cv_dir, recursive = TRUE, showWarnings = FALSE)
 
-saturated_fe <- unlist(new_panel_specs$fe[new_panel_specs$spec_id == "saturated"], use.names = FALSE)
+spec_fe <- unlist(new_panel_specs$fe[new_panel_specs$spec_id == FE_SPEC], use.names = FALSE)
+stopifnot(length(spec_fe) > 0)
+message("FE spec: ", FE_SPEC, " | FE: ", paste(spec_fe, collapse = ", "))
 
 # -----------------------------
 # Sample
@@ -90,6 +104,17 @@ df <- panel %>%
   filter_regression_sample(tavg_order = TAVG_ORDER, prcp_order = PRCP_ORDER, extra_vars = sample_vars)
 rm(panel)
 
+# Drop states with a single county. Under saturated FE feols drops them anyway
+# (their state x year x age cells are singletons); under main FE they would
+# stay. Dropping them under both keeps the same states in both CVs, so the
+# fold draws and the results are comparable across specs. (Plausible
+# alternative: keep them under main FE, which is the main regs' own sample.)
+counties_per_state <- df %>% group_by(adm1_code) %>% summarise(n_counties = n_distinct(admin_code), .groups = "drop")
+single_county_states <- counties_per_state$adm1_code[counties_per_state$n_counties == 1]
+message("Dropped single-county states: ", paste(single_county_states, collapse = ", "),
+        " (", sum(df$adm1_code %in% single_county_states), " rows)")
+df <- df %>% filter(!adm1_code %in% single_county_states)
+
 stopifnot(
   !anyDuplicated(df[c("admin_code", "agegroup", "year")]),
   is.factor(df$agegroup)
@@ -105,8 +130,8 @@ message(
 # -----------------------------
 
 # The FE with the age interaction dropped: within one age group they are
-# the same FE as `saturated_fe`
-fe_within_age <- sub("\\^agegroup", "", sub("agegroup\\^", "", saturated_fe))
+# the same FE as `spec_fe`
+fe_within_age <- sub("\\^agegroup", "", sub("agegroup\\^", "", spec_fe))
 
 rhs_controls <- paste(c(tavg_vars, wind_control_vars), collapse = " + ")
 vars_to_residualize <- c(deathrate_w99 = "y_res", setNames(paste0("prcp_res_", seq_len(PRCP_ORDER)), prcp_vars),
@@ -123,7 +148,6 @@ residual_by_age <- lapply(levels(df$agegroup), function(age) {
   fit <- feols(fml, data = d, weights = ~weight, notes = FALSE)
 
   # One column per variable, one row per row of d, NA on the FE singletons
-  # (the same rows for every variable: same FE and complete-case data)
   res <- resid(fit)
   colnames(res) <- unname(vars_to_residualize[models(fit)$lhs])
 
