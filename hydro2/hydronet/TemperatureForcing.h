@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <limits>
 
 namespace openworld {
 
@@ -34,12 +35,23 @@ private:
   static constexpr double FREEZING_C = 0.0;
 
   struct Month {
+    // Persistent metadata used to reopen this month's inputs.
     std::string precipPath;
     std::string tminPath;
     std::string tmaxPath;
+    
+    // Only populated for the currently loaded month.
+    std::unique_ptr<netCDF::NcFile> precipFile;
+    std::unique_ptr<netCDF::NcFile> tminFile;
+    std::unique_ptr<netCDF::NcFile> tmaxFile;
 
+    netCDF::NcVar precipVar;
+    netCDF::NcVar tminVar;
+    netCDF::NcVar tmaxVar;
+    
     unsigned firstDay;
     unsigned nday;
+    
     bool tminIsKelvin;
     bool tmaxIsKelvin;
   };
@@ -319,6 +331,8 @@ private:
       if (loadedMonth >= 0)
 	closeMonth(static_cast<std::size_t>(loadedMonth));
 
+      loadedMonth = -1;
+
       openMonth(selectedIndex);
       loadedMonth = static_cast<int>(selectedIndex);
     }
@@ -466,13 +480,17 @@ public:
       std::string tmaxPath =
         monthlyPath(tmaxDirectory, tmaxPrefix, year, month);
 
-      netCDF::NcFile precipFile(precipPath, netCDF::NcFile::read);
-      netCDF::NcFile tminFile(tminPath, netCDF::NcFile::read);
-      netCDF::NcFile tmaxFile(tmaxPath, netCDF::NcFile::read);
+      entry->precipPath = precipPath;
+      entry->tminPath = tminPath;
+      entry->tmaxPath = tmaxPath;
 
-      netCDF::NcVar precipVar = precipFile.getVar(precipVarName);
-      netCDF::NcVar tminVar = tminFile.getVar(tminVarName);
-      netCDF::NcVar tmaxVar = tmaxFile.getVar(tmaxVarName);
+      entry->precipFile.reset(new netCDF::NcFile(precipPath, netCDF::NcFile::read));
+      entry->tminFile.reset(new netCDF::NcFile(tminPath, netCDF::NcFile::read));
+      entry->tmaxFile.reset(new netCDF::NcFile(tmaxPath, netCDF::NcFile::read));
+
+      entry->precipVar = entry->precipFile->getVar(precipVarName);
+      entry->tminVar = entry->tminFile->getVar(tminVarName);
+      entry->tmaxVar = entry->tmaxFile->getVar(tmaxVarName);
 
       checkVar(entry->precipVar, precipVarName);
       checkVar(entry->tminVar, tminVarName);
@@ -500,14 +518,16 @@ public:
         ncLats.resize(nlat);
         ncLons.resize(nlon);
 
-        netCDF::NcVar latVar = entry->precipFile->getVar("latitude");
-        netCDF::NcVar lonVar = entry->precipFile->getVar("longitude");
+	{
+	  netCDF::NcVar latVar = entry->precipFile->getVar("latitude");
+	  netCDF::NcVar lonVar = entry->precipFile->getVar("longitude");
 
-        checkVar(latVar, "latitude");
-        checkVar(lonVar, "longitude");
+	  checkVar(latVar, "latitude");
+	  checkVar(lonVar, "longitude");
 
-        latVar.getVar(ncLats.data());
-        lonVar.getVar(ncLons.data());
+	  latVar.getVar(ncLats.data());
+	  lonVar.getVar(ncLons.data());
+	}
 
         firstFile = false;
       } else if (monthLat != nlat || monthLon != nlon) {
@@ -519,10 +539,6 @@ public:
         entry->tminVar, tminVarName, monthDays, nlat, nlon);
       checkCubeDimensions(
         entry->tmaxVar, tmaxVarName, monthDays, nlat, nlon);
-
-      entry->precipPath = precipPath;
-      entry->tminPath = tminPath;
-      entry->tmaxPath = tmaxPath;
 
       entry->firstDay = nday;
       entry->nday = monthDays;

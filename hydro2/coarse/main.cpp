@@ -3,6 +3,7 @@
 #include <sstream>
 #include <vector>
 #include <string>
+#include <filesystem>
 #include <stdio.h>
 #include <mpi.h>
 #include <tiffio.h>
@@ -27,6 +28,8 @@
 #include "../hydronet/NetCDFOutput.h"
 
 bool regenerate = false;
+
+std::filesystem::path datadir = "/home/jrising/flooding";
 
 using namespace openworld;
 
@@ -155,7 +158,7 @@ bool loadGeoTransform(TIFF* tiff, double gt[6]) {
 int main(int argc, const char* argv[])
 {
   MPI_Init(NULL,NULL); {
-    TIFF* tiff = TIFFOpen("composite.tif", "r");
+    TIFF* tiff = TIFFOpen((datadir / "composite.tif").c_str(), "r");
     if (!tiff) return 1;
 
     double gt[6];
@@ -195,18 +198,18 @@ int main(int argc, const char* argv[])
     DividedRange latitudes = DividedRange::withEnds(lat_min, lat_max, .1, Inds::lat);
     DividedRange longitudes = DividedRange(lon_min, lon_max, .1, Inds::lon);
 
-    GeographicMap<double>* mask_lsm = NetCDFGeographicMap::loadNetCDF("era5_lsm.nc", "lsm", true);
+    GeographicMap<double>* mask_lsm = NetCDFGeographicMap::loadNetCDF((datadir / "era5_lsm.nc").c_str(), "lsm", true);
     GeographicMap<bool>& mask_fine = *mask_lsm >= 0.5;
     
     GeographicMap<float>& slope = *MatrixGeographicMap<float>::loadTIFF(DividedRange(lat_min, lat_max, -dlat, Inds::lat),
 									DividedRange(lon_min, lon_max, dlon, Inds::lon),
-									"compositeslp.tif");
+									(datadir / "compositeslp.tif").c_str());
     slope /= 1e5; // don't produce transient!
     GeographicMap<double>* slope_fine = new GeographicMap<double>(slope);
 
     DInfinityMap* direction_fine = new DInfinityMap(*MatrixGeographicMap<float>::loadTIFF(DividedRange(lat_min, lat_max, -dlat, Inds::lat),
 											  DividedRange(lon_min, lon_max, dlon, Inds::lon),
-											  "compositeang.tif"));
+											  (datadir / "compositeang.tif").c_str()));
     HydroNet net(*mask_lsm);
 
     // Construct bounding box to process: as many ERA5 cells as we can get without going to the edge.
@@ -216,18 +219,18 @@ int main(int argc, const char* argv[])
     double proc_lat_min = max(lat_min + 0.1, lat_min + 0.1 / 2);
     cout << proc_lon_min << " : " << proc_lon_max << ", " << proc_lat_min << " : " << proc_lat_max << endl;
     
-    std::vector<HydroOutputNode*> outputNodes = loadKnownOutputNodes("../streamflows/grdd-meta.csv");
+    std::vector<HydroOutputNode*> outputNodes = loadKnownOutputNodes((datadir / "streamflows/grdd-meta.csv").c_str());
 
     if (regenerate) {
       net.generate(*direction_fine, mask_fine, *slope_fine, 10000.0, outputNodes);
 
-      std::ofstream binaryFile("network.dat", std::ios::binary);
+      std::ofstream binaryFile((datadir / "network.dat").c_str(), std::ios::binary);
       PointerTracker tracker;
       net.streamInsert(binaryFile, tracker);
       binaryFile.close();
     } else {
       PointerReference reference;
-      std::ifstream binaryFile("network.dat", std::ios::binary);
+      std::ifstream binaryFile((datadir / "network.dat").c_str(), std::ios::binary);
       DebugIStream debugIn(binaryFile);
       try {
 	net.streamExtract(debugIn, reference);
@@ -240,12 +243,12 @@ int main(int argc, const char* argv[])
 
       // ConstantForcing forcing;
       
-      // NetCDFHydroForcing forcing("global_monthly_flow_1950.nc4",
+      // NetCDFHydroForcing forcing((datadir / "global_monthly_flow_1950.nc4").c_str(),
       // 				 "rainfall_flow", "tempmelt_flow", net);
 
-      MonthlyTemperatureHydroForcing forcing("/project/cil/gcp/climate/ERA5-LAND-GLOBAL/raw/daily/tp_total",
-					     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/raw/daily/tmin",
-					     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/raw/daily/tmax",
+      MonthlyTemperatureHydroForcing forcing("/project/cil/gcp/climate/ERA5-LAND-GLOBAL/raw/daily/global/tp_total",
+					     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/raw/daily/global/tmin",
+					     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/raw/daily/global/tmax",
 					     "era5land_global_tp_total",
 					     "era5land_global_tmin",
 					     "era5land_global_tmax",
@@ -259,14 +262,14 @@ int main(int argc, const char* argv[])
       HydroRunner runner(net, forcing, forcing.days(), 24);
       HydroRunResult result = runner.run();
 
-      // writeRiverRunoffNetCDF(1, "era5_lsm.nc", "lsm",
-      // 			     "river_flow.nc4",
-      // 			     result);
-
-      writeRiverRunoffNetCDF("global_monthly_flow_1950.nc4",
-			     "rainfall_flow",
-			     "river_flow.nc4",
+      writeRiverRunoffNetCDF(1, (datadir / "era5_lsm.nc").c_str(), "lsm",
+			     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/processed/daily/river_flow.nc4",
 			     result);
+
+      // writeRiverRunoffNetCDF((datadir / "global_monthly_flow_1950.nc4").c_str(),
+      // 			     "rainfall_flow",
+      // 			     (datadir / "river_flow.nc4").c_str(),
+      // 			     result);
 
     }
 

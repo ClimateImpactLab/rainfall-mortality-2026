@@ -12,6 +12,7 @@
 #include <chrono>
 #include <iostream>
 #include <iomanip>
+#include <string>
 
 namespace openworld {
 
@@ -169,19 +170,33 @@ private:
 		      const std::chrono::steady_clock::time_point& start) const {
     using namespace std::chrono;
     
+    const unsigned barWidth = 40;
+
+    double fraction = ndays > 0
+      ? static_cast<double>(completedDays) / static_cast<double>(ndays)
+      : 1.0;
+    fraction = std::max(0.0, std::min(1.0, fraction));
+  
     double elapsed =
       duration_cast<duration<double> >(steady_clock::now() - start).count();
+    double remaining = fraction > 0.0
+      ? elapsed * (1.0 / fraction - 1.0)
+      : 0.0;
     
-    double fraction = (double) completedDays / ndays;
-    double remaining =
-      fraction > 0.0 ? elapsed * (1.0 / fraction - 1.0) : 0.0;
+    unsigned filled = static_cast<unsigned>(std::round(fraction * barWidth));
     
-    std::cerr << "\rHydrology: "
+    std::string bar(filled, '=');
+    if (filled < barWidth)
+      bar += '>';
+    if (bar.size() < barWidth)
+      bar += std::string(barWidth - bar.size(), ' ');
+    
+    std::cerr << "\rHydrology [" << bar << "] "
 	      << std::fixed << std::setprecision(1)
-	      << (100.0 * fraction) << "%  "
+	      << (100.0 * fraction) << "% "
 	      << completedDays << "/" << ndays
-	      << " days; elapsed " << elapsed / 60.0 << " min"
-	      << "; ETA " << remaining / 60.0 << " min"
+	      << " | elapsed " << elapsed / 60.0 << " min"
+	      << " | ETA " << remaining / 60.0 << " min"
 	      << std::flush;
   }
   

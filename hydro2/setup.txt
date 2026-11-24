@@ -1,3 +1,5 @@
+Initial setup:
+
 git clone https://github.com/jrising/openworld.git
 git clone https://github.com/jrising/opendims.git
 
@@ -6,8 +8,9 @@ conda create -n hydroenv -c conda-forge netcdf-cxx4
 conda install -c conda-forge openmpi openmpi-mpicxx cxx-compiler
 make
 
-module load python
+Every time:
+
+## module load python
 source activate hydroenv
 module load libgeotiff
-module load netcdf
 
