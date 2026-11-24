@@ -8,11 +8,14 @@ Daily CHIRPS files are on a 0.05-degree longitude/latitude grid.
 
 Two CHIRPS details matter for this folder:
 
-- CHIRPS does not cover the whole globe. Countries are included only when the
-  current shapefile fits within the CHIRPS latitude range.
+- CHIRPS covers 50S to 50N only. A unit with any population or land area
+  outside that band gets missing precipitation, even if most of it is inside
+  (coverage_status = outside_chirps in the admin summary). For ex Nord in
+  France has 0.1% of its population inside the band and Somme 66%, both are
+  missing.
 - A few small coastal or island polygons have CHIRPS weights, but the assigned
   precipitation cell is masked in the raw CHIRPS file. Those cases are listed in
-  [settings.py](settings.py).
+  [shapefiles_chirps.csv](shapefiles_chirps.csv).
 
 Precipitation powers are calculated at the CHIRPS grid-cell level before admin
 averaging:
@@ -57,17 +60,23 @@ Keep large outputs outside the repo.
 ## Scripts
 
 ```text
+shapefiles_chirps.csv
 settings.py
 common.py
 aggregation_scripts/
 jobs/
 ```
 
-[settings.py](settings.py) lists the shapefiles, admin IDs, year ranges, and
-CHIRPS-specific small-cell rules.
+[shapefiles_chirps.csv](shapefiles_chirps.csv) has one row per country: the
+shapefile, admin ID and name columns, ID widths, output subfolder and the
+CHIRPS small-cell rules.
+
+[settings.py](settings.py) reads that CSV and sets the years (1981-2025 for
+every country) and the input and output paths.
 
 [common.py](common.py) defines checks, CSV writing, admin ID handling,
-shapefile reading, and CHIRPS grid reading.
+shapefile reading, and CHIRPS grid reading. It drops the BARMM zones for PHL
+and clips Tierra del Fuego for ARG.
 
 [aggregation_scripts/01_make_weights.py](aggregation_scripts/01_make_weights.py)
 builds fixed admin-to-CHIRPS-cell weights. Population weights use LandScan
@@ -107,13 +116,24 @@ The matching sbatch files are in [jobs/](jobs/).
 ## Countries
 
 ```text
-AUS BRA COL ECU IND JPN KOR MEX PER PHL
+ARG AUS BRA_STABLE BWA CHL CHN COL CPV CRI ECU EU FRA IND JPN KOR MEX PER PHL RWA THA USA
 ```
 
-These are the countries listed in [settings.py](settings.py). The list is
-limited partly because CHIRPS does not cover high latitudes. Do not add a
-country without first checking that the full current shapefile is covered by
-CHIRPS.
+Every ERA5-Land country except CAN (most census divisions are north of 50N).
+
+Countries cut by the 50S/50N edge:
+
+- ARG: Tierra del Fuego (province 94) and Santa Cruz
+- CHL: 9 comunas in Magallanes are outside, 1 partly
+- CHN: 9 counties in the far north are outside, 5 partly
+- FRA: 1 department is outside, 5 partly
+- USA: Alaska is outside
+- EU: 169 NUTS2 regions fully inside, 27 partly (northern France, Belgium,
+  Luxembourg, Germany, Czechia, Poland), 124 outside (UK, Ireland, Netherlands,
+  Nordic and Baltic countries, most of Germany and Poland)
+
+Countries with changed boundaries (COL, ECU, PER, PHL, THA) write to a
+current_boundaries subfolder.
 
 ## Small-Cell Rules
 
@@ -154,7 +174,8 @@ most 6 chunks run at the same time.
 sbatch --array=0-19%6 chirps_admin/jobs/01_weights.sbatch COL 20
 ```
 
-After those 20 chunks finish, combine them into the final weight files:
+After those 20 chunks finish, combine them into the final weight files (add
+--overwrite after the chunk count to rebuild existing final weights):
 
 ```bash
 sbatch chirps_admin/jobs/01_combine_weights.sbatch COL 20
@@ -166,11 +187,42 @@ country-level check.
 Aggregate daily, monthly, and annual precipitation files:
 
 ```bash
-sbatch --array=1985-2024%6 chirps_admin/jobs/02_daily.sbatch COL
+sbatch --array=1981-2025%6 chirps_admin/jobs/02_daily.sbatch COL
 ```
 
 This array is split by years. Each task writes one country-year of daily,
 monthly, and annual precipitation, then runs the country-year check.
+
+### Current-boundary run
+
+Weight chunks per country (more chunks for countries with many units):
+
+```bash
+sbatch --array=0-1%6   chirps_admin/jobs/01_weights.sbatch ARG 2
+sbatch --array=0-39%6  chirps_admin/jobs/01_weights.sbatch BRA_STABLE 40
+sbatch --array=0-4%6   chirps_admin/jobs/01_weights.sbatch BWA 5
+sbatch --array=0-4%6   chirps_admin/jobs/01_weights.sbatch CHL 5
+sbatch --array=0-29%6  chirps_admin/jobs/01_weights.sbatch CHN 30
+sbatch --array=0-9%6   chirps_admin/jobs/01_weights.sbatch COL 10
+sbatch --array=0       chirps_admin/jobs/01_weights.sbatch CPV 1
+sbatch --array=0-4%6   chirps_admin/jobs/01_weights.sbatch CRI 5
+sbatch --array=0-2%6   chirps_admin/jobs/01_weights.sbatch ECU 3
+sbatch --array=0-9%6   chirps_admin/jobs/01_weights.sbatch EU 10
+sbatch --array=0-2%6   chirps_admin/jobs/01_weights.sbatch FRA 3
+sbatch --array=0-2%6   chirps_admin/jobs/01_weights.sbatch PER 3
+sbatch --array=0-9%6   chirps_admin/jobs/01_weights.sbatch PHL 10
+sbatch --array=0       chirps_admin/jobs/01_weights.sbatch RWA 1
+sbatch --array=0-2%6   chirps_admin/jobs/01_weights.sbatch THA 3
+sbatch --array=0-29%6  chirps_admin/jobs/01_weights.sbatch USA 30
+```
+
+Then one combine job per country with the same chunk count, for ex
+`sbatch chirps_admin/jobs/01_combine_weights.sbatch USA 30`, and one year array
+per country, for ex
+`sbatch --array=1981-2025%6 chirps_admin/jobs/02_daily.sbatch USA`.
+
+AUS, IND, JPN, KOR and MEX keep their earlier weights, so they only need the
+year array. Years already on disk are skipped.
 
 Check one country-year:
 

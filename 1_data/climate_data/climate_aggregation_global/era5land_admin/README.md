@@ -41,6 +41,90 @@ jobs/
 [settings.py](settings.py) defines the country settings: shapefiles, ID
 columns, year ranges, and the raw ERA5-Land path.
 
+[shapefiles_current.csv](shapefiles_current.csv) lists the maps for the current
+panel, one row per country. The elevation and income scripts read it too.
+
+Thailand (`THA`) uses the 125 units in
+`THA_public_panel_mixed_adm1_adm2.gpkg`: 74 provinces, Nong Khai/Bueng Kan
+together (`TH38_43`), and 50 Bangkok khet. `admin_id` keeps its `TH` prefix,
+for ex climate region `THA_TH1001` is mortality `admin_id = TH1001`. Climate
+years are 1950-2025.
+
+The other updated maps use these units and IDs:
+
+| Country | Units | Map ID |
+|---|---:|---|
+| PHL | 1,509 merged municipality units, excluding BARMM/SGA | `parent_zone_id` |
+| COL | 1,009 merged municipality units | `parent_zone_id` |
+| ECU | 162 reviewed canton groups | `admin_id`, read as `adm2_id` |
+| PER | 196 provinces | `shp_adm2_code` |
+
+PHL's map has 1,625 units. `read_admins()` drops the 116 marked
+`drop_no_barmm` (any member in BARMM or its Special Geographic Area, SGA),
+which leaves the 1,509 units of the mortality file. The map has UTM zone 51N
+coordinates but no projection label, so `read_admins()` takes it from the
+original municipality shapefile.
+
+Ecuador uses the final `ECU_adm2_grouped_2010.shp` under
+`reviewed_groups_20261111/`. Its 162 IDs match the rebuilt mortality file.
+The old 166-unit files are in `ECU/old_boundaries/166_units_20261111/`, the
+162-unit files in `ECU/current_boundaries/`.
+
+Peru keeps the same province IDs, but `PER_adm2_panel.geojson` has the full
+MINAM polygons, not the simplified ones.
+
+Cabo Verde (`CPV`) uses the 21 units in `CPV_adm1_21_units.gpkg`, same as the
+2019-2023 mortality panel. `admin_id` stays text, for ex the combined Sao
+Nicolau unit `31_32`. Climate years are 1950-2025. The ERA5-Land land mask
+leaves Sal (`CPV_41`) and Brava (`CPV_91`) missing for precip, temp and wind,
+since their nearest valid cells are on other islands. See the
+[Cabo Verde cell check](cell_fallback/README.md#cabo-verde). The other 19
+units are complete in every year.
+
+Rwanda (`RWA`) uses the 30 ADM2 districts in
+`rwa_adm2_2006_NISR_WGS1984_20181002.shp`, with `ADM2_PCODE` and `ADM2_EN` as
+`adm2_id` and `adm2_name`, for ex climate region `RWA_RW11` is mortality
+`admin_id = RW11`. Deaths are by facility district, so climate is too. Climate
+years are 1950-2025, with no missing district or year. Coverage is in
+`ERA5-LAND-GLOBAL/RWA/coverage_checks.xlsx`.
+
+Canada (`CAN`) uses the 293 census divisions in `lcd_000b21a_e.zip`, read
+zipped, with `CDUID` as `adm2_id`. Climate years are 1950-2025. Only
+`CAN_2401` (Iles-de-la-Madeleine) is missing, its nearest valid cells are past
+the 0.5-degree cutoff, see the [Canada fallback](cell_fallback/README.md#canada).
+Coverage is in `ERA5-LAND-GLOBAL/CAN/coverage_checks.xlsx`.
+
+Argentina (`ARG`) uses 24 province units, including Buenos Aires city, for
+1950-2025. The shapefile's `in1` column becomes `province_code` in the
+climate files, matching the mortality files.
+
+For province 94, `read_admins()` keeps Tierra del Fuego and nearby islands
+within 75-63 degrees west and 56-50 degrees south. This drops Antarctica
+and the far South Atlantic islands, without cutting any polygon part.
+
+Brazil has two entries. `BRA` keeps the older Carleton/GADM geography.
+`BRA_STABLE` uses the 5,474 stable IBGE municipality units in the rebuilt
+1997-2024 mortality panel. Their weights and climate files are stored in
+separate output folders.
+
+Botswana (`BWA`) uses the 519 units in the 2011 ADM3 shapefile, with
+`ADM3_PCODE` as the admin ID. Climate years are 1950-2025. The mortality
+file uses 518 of the 519 units.
+
+LandScan 2011 assigns zero population to three Botswana units: Vaalhoek
+(`BW170112`), Qabo (`BW160116`), and Bogogobo (`BW170107`), so their population
+weights fall back to area weights.
+
+Costa Rica (`CRI`) uses the 463 fixed zones in `CRI_fixed_zones_2024.gpkg`,
+with `fixed_code` as the admin ID. The mortality file uses 462, without Isla
+del Coco (`60110`), which is missing because its cells are masked. Climate
+years are 1950-2025.
+
+Santo Domingo (`40301`) and San Francisco (`10802`) have no LandScan or GPW
+points. Each sits inside one ERA5-Land cell, so both weights are 1 for that
+cell (`single_cell_ids` in `settings.py`, `only_climate_cell` in the admin
+summary).
+
 [common.py](common.py) defines functions used across scripts for checks, CSV
 writing, admin IDs, and ERA5-Land grid reading.
 
@@ -170,6 +254,8 @@ that compare wind and rainfall on the same days.
 The commands below use Brazil as an example. Replace `BRA` and the year range
 with the country and years you need.
 
+For the rebuilt Brazil panel, use `BRA_STABLE` and years `1950-2024`.
+
 Start here:
 
 ```bash
@@ -244,6 +330,23 @@ ERA5-LAND-GLOBAL/<COUNTRY>/daily/
 ERA5-LAND-GLOBAL/<COUNTRY>/monthly/
 ERA5-LAND-GLOBAL/<COUNTRY>/annual/
 ```
+
+PHL, COL, ECU, and PER keep the two boundary versions in separate folders:
+
+```text
+ERA5-LAND-GLOBAL/<COUNTRY>/old_boundaries/
+ERA5-LAND-GLOBAL/<COUNTRY>/current_boundaries/
+weights/landscan2011/ERA5-LAND-GLOBAL/<COUNTRY>/old_boundaries/
+weights/landscan2011/ERA5-LAND-GLOBAL/<COUNTRY>/current_boundaries/
+```
+
+`old_boundaries/` has the previous files. The reruns write to
+`current_boundaries/`, with daily, monthly, annual, and wind folders inside it.
+`output_subfolder` in `settings.py` selects these paths. Other countries keep
+the paths shown above. Downstream scripts with fixed country paths need the
+`current_boundaries/` subfolder added before using the new results.
+
+Thailand only has `current_boundaries/`.
 
 Combined files:
 

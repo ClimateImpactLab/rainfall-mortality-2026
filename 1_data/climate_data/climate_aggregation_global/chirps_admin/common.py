@@ -128,15 +128,22 @@ def ensure_region_id(frame: pd.DataFrame, spec: Country) -> pd.DataFrame:
 
 def read_admins(spec: Country) -> gpd.GeoDataFrame:
     # Read only the admin IDs, names, and geometry needed for the weights.
-    # Country-specific shapefile column names are listed in settings.py.
+    # The PHL and ARG steps below match era5land_admin/common.py.
     requested = [*spec.id_columns, *spec.name_columns]
     columns = [spec.column_aliases.get(column, column) for column in requested]
+    if spec.code == "PHL":
+        columns.append("drop_no_barmm")
 
     options = {"columns": columns, "engine": "pyogrio"}
     if spec.shapefile_encoding:
         options["encoding"] = spec.shapefile_encoding
 
     admins = gpd.read_file(spec.shapefile, **options)
+
+    # Match the no-BARMM mortality sample. Drop the whole parent zone if any
+    # member belongs to BARMM or its Special Geographic Area (SGA).
+    if spec.code == "PHL":
+        admins = admins.loc[admins.drop_no_barmm.eq(False)].drop(columns="drop_no_barmm").copy()
 
     # Copy aliased shapefile columns to the common names used by the scripts.
     for target, source in spec.column_aliases.items():
@@ -145,12 +152,25 @@ def read_admins(spec: Country) -> gpd.GeoDataFrame:
 
     require(admins.crs is not None, "Shapefile has no CRS")
 
+    # The PHL merged map kept UTM coordinates but lost their projection label.
+    # The original municipality shapefile's .prj identifies UTM zone 51N.
+    if spec.code == "PHL" and admins.crs.name == "Undefined geographic SRS":
+        admins = admins.set_crs(32651, allow_override=True)
+
     # CHIRPS is stored on a longitude/latitude grid.
     if admins.crs.to_epsg() != 4326:
         admins = admins.to_crs(4326)
 
     # Repair invalid polygons before spatial matching.
     admins["geometry"] = admins.geometry.make_valid()
+
+    # Province 94 also includes Antarctica and distant South Atlantic islands.
+    # For mortality aggregation, keep Tierra del Fuego and its nearby islands.
+    if spec.code == "ARG":
+        tierra_del_fuego = admins.province_code.eq("94")
+        admins.loc[tierra_del_fuego, "geometry"] = admins.loc[
+            tierra_del_fuego, "geometry"
+        ].intersection(box(-75, -56, -63, -50))
 
     require(admins.geometry.notna().all(), "Shapefile contains missing geometry")
     require((~admins.geometry.is_empty).all(), "Shapefile contains empty geometry")

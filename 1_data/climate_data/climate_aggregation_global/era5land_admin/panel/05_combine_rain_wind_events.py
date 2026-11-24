@@ -39,10 +39,10 @@ sys.path.insert(0, str(CLIMATE_ADMIN))
 from settings import OUTPUT_ROOT, PRODUCT  # noqa: E402
 
 # Country-level files from 04 are stored one folder per country.
-DEFAULT_INPUT_DIR = OUTPUT_ROOT / PRODUCT / "combined/daily_rain_event_wind_overlap_by_country"
+DEFAULT_INPUT_DIR = OUTPUT_ROOT / PRODUCT / "combined/current_boundaries/daily_rain_event_wind_overlap_by_country"
 
 # Combined event files and review tables are written here.
-DEFAULT_OUTPUT_DIR = OUTPUT_ROOT / PRODUCT / "combined/daily_rain_event_wind_overlap"
+DEFAULT_OUTPUT_DIR = OUTPUT_ROOT / PRODUCT / "combined/current_boundaries/daily_rain_event_wind_overlap"
 
 # Review increasingly heavy rain-event samples.
 RAIN_THRESHOLDS_MM = (100, 200, 300)
@@ -50,12 +50,10 @@ RAIN_THRESHOLDS_MM = (100, 200, 300)
 # Keep enough extreme events for manual review without writing huge tables.
 TOP_EVENT_ROWS = 500
 
-# USA and Mexico have post-2010 rain/wind files from the older country coverage.
-# Drop those later years only in this old-panel review (Carleton panel stops in 2010)
-EXCLUDE_COUNTRY_YEARS = {
-    "MEX": (2011, 2024),
-    "USA": (2011, 2024),
-}
+# Keep the full available history. Mortality years are selected by the panel merge.
+CURRENT_COUNTRIES = pd.read_csv(CLIMATE_ADMIN / "shapefiles_current.csv")["country"].tolist()
+FLAG_COLUMNS = ["any_pop_above_17p5_day", "any_pop_above_17p5_pm1day",
+                "windmean_ge_17p5_pop_day", "windmean_ge_17p5_pop_pm1day"]
 
 
 # -----------------------------
@@ -76,19 +74,13 @@ def parse_args():
 
 def read_country_files(input_dir, name):
     # Stack the same output file from each country folder written by 04.
-    paths = sorted(input_dir.glob(f"*/{name}"))
-    return pd.concat((pd.read_csv(path) for path in paths), ignore_index=True)
-
-
-def drop_excluded_years(frame):
-    # Leave country files untouched, drop post-2010 USA/Mexico only here.
-    excluded = pd.Series(False, index=frame.index)
-    for country_code, (first_year, last_year) in EXCLUDE_COUNTRY_YEARS.items():
-        excluded |= (
-            frame["climate_country"].eq(country_code)
-            & frame["year"].between(first_year, last_year)
-        )
-    return frame.loc[~excluded].copy()
+    paths = [input_dir / code / name for code in CURRENT_COUNTRIES]
+    frames = [pd.read_csv(path, dtype={"region_id": "string"}) for path in paths]
+    combined = pd.concat(frames, ignore_index=True)
+    for column in FLAG_COLUMNS:
+        if column in combined:
+            combined[column] = combined[column].astype("boolean")
+    return combined
 
 
 # -----------------------------
@@ -148,7 +140,7 @@ def top_tables(events):
     # Very high rain without any population-weighted cell above 17.5 m/s.
     high_rain_low_wind = events.loc[
         (events["prcp_pop_p1"] >= 200)
-        & (~events["any_pop_above_17p5_pm1day"].fillna(False))
+        & events["any_pop_above_17p5_pm1day"].eq(False).fillna(False)
     ].copy()
     high_rain_low_wind = high_rain_low_wind.sort_values(
         "prcp_pop_p1", ascending=False
@@ -169,10 +161,6 @@ def main():
     country_year = read_country_files(
         args.input_dir, "daily_precip_wind_country_year_summary.csv"
     )
-
-    # Drop post-2010 USA/Mexico only for this old-panel review.
-    events = drop_excluded_years(events)
-    country_year = drop_excluded_years(country_year)
 
     # Build the threshold summary and the event-example tables.
     threshold_summary = summarize_by_threshold(events)

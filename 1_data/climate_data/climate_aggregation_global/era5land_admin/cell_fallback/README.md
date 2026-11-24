@@ -81,22 +81,24 @@ For precipitation and temperature, the distance limit is:
 
 ## Run
 
-Write the fallback ID CSVs:
+Submit from `1_data/climate_data/climate_aggregation_global`. Write the
+fallback ID CSVs, or use `--country CAN` to write only Canada's list:
 
 ```bash
-sbatch jobs/fallback/01_make_fallback_ids.sbatch
+sbatch era5land_admin/jobs/fallback/01_make_fallback_ids.sbatch
+sbatch era5land_admin/jobs/fallback/01_make_fallback_ids.sbatch --country CAN
 ```
 
 Check first:
 
 ```bash
-sbatch jobs/fallback/02_apply_fallback.sbatch COUNTRY /path/to/fallback_ids.csv check 0.5 YEAR
+sbatch era5land_admin/jobs/fallback/02_apply_fallback.sbatch COUNTRY /path/to/fallback_ids.csv check 0.5 YEAR
 ```
 
 Apply only after reading the detailed check CSV:
 
 ```bash
-sbatch jobs/fallback/02_apply_fallback.sbatch COUNTRY /path/to/fallback_ids.csv apply 0.5 YEAR
+sbatch era5land_admin/jobs/fallback/02_apply_fallback.sbatch COUNTRY /path/to/fallback_ids.csv apply 0.5 YEAR
 ```
 
 The arguments are:
@@ -115,6 +117,38 @@ Detailed check CSVs go here:
 
 After applying fallback weights, rerun the affected climate outputs.
 
+## Canada
+
+The 2000 pilot has missing precipitation and temperature for one of Canada's
+293 census divisions:
+
+```text
+CAN_2401  Communaute maritime des Iles-de-la-Madeleine
+```
+
+The unit has population and area weights, but all positively weighted cells
+are missing in the raw January reference fields. In 1950, 2000 and 2025
+the nearest valid cells are 0.825 to 1.170 degrees (82 to 126 km) away, past
+the 0.5-degree cutoff for both weights.
+
+The reviewed ID is written to:
+
+```text
+ERA5-LAND-GLOBAL/cell_fallback_ids/can_mortality_required.csv
+```
+
+Check reports are under `ERA5-LAND-GLOBAL/cell_fallback_checks/CAN/` in the
+shared climate data folder. They use the first January day of each reference
+year.
+
+`diagnostics/check_country_series.py` checks every annual file and saves the
+cell reports, distances and missing units in
+`ERA5-LAND-GLOBAL/CAN/coverage_checks.xlsx`. It stops if any unit other than
+`CAN_2401` is missing.
+
+Over 1950-2025, 292 of 293 units have valid annual climate in every year.
+`CAN_2401` is the only missing unit (76 of 22,268 admin-year rows).
+
 ## Brazil
 
 Brazil uses fallback for four nearby coastal cases:
@@ -125,6 +159,15 @@ Brazil uses fallback for four nearby coastal cases:
 
 These units had weights on masked ERA5-Land cells, but valid cells were only
 0.1 to 0.2 degrees away.
+
+The stable Brazil geography is checked separately. Itaparica, Madre de Deus,
+and Imbé use valid cells 0.1 degrees away. Fernando de Noronha stays missing
+because the nearest valid land cell is more than 3.2 degrees away.
+
+```text
+/project/cil/gcp/estimation/rainfall-mortality/climate_data/
+ERA5-LAND-GLOBAL/BRA_STABLE/cell_fallback_applied.csv
+```
 
 ## USA
 
@@ -182,3 +225,40 @@ COL_88564  Providencia
 These islands are far from mainland Colombia. They were left missing instead
 of being matched to a distant mainland or open-ocean cell. If they matter for
 the final mortality sample, decide on them separately.
+
+## Cabo Verde
+
+The ERA5-Land land mask leaves all positively weighted cells missing for Sal
+(`CPV_41`) and Brava (`CPV_91`), under both population and area weights.
+All other 19 mortality units have complete precipitation and temperature for
+1950-2025.
+
+Nearest valid cells:
+
+| Unit | Nearest valid cells overlap | Source-cell distance | Degree distance |
+| --- | --- | --- | --- |
+| Brava | Fogo | 22-34 km | 0.20-0.32 |
+| Sal | Boa Vista | 44-77 km | 0.40-0.70 |
+
+These are distances from the original weighted cell centres to replacement
+cell centres, not from the island coastline. The ranges cover both weighting
+methods. The candidates have valid precipitation, mean temperature, maximum
+temperature, and wind on the first day of the 2000 reference files.
+
+Brava passes the 0.5-degree cutoff for precip and temp. Sal fails it because
+some of its cells are farther away, and a unit moves whole or not at all. Even
+Brava would get another island's climate, so both stay missing for precip,
+temp and wind.
+
+The 1.6-degree wind rule would move both islands, so `wind_common.py` skips
+it for CPV and wind has the same two missing units. The other 19 units have complete annual wind for
+1950-2025.
+
+Detailed weighted-cell coverage, replacement coordinates, distances, and
+1981-2010 baseline counts are saved under:
+
+```text
+/project/cil/gcp/estimation/rainfall-mortality/climate_data/ERA5-LAND-GLOBAL/CPV/cell_checks/
+```
+
+The full-series check is saved beside that folder as `coverage_checks.xlsx`.

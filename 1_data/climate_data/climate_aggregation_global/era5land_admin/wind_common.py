@@ -336,6 +336,11 @@ def write_fallback_audit(spec, year, grid, moves):
 
 
 def apply_wind_fallback(spec, year, grid, variable, admins, flat_indices, matrices, flip_latitude=False):
+    # Sal and Brava would borrow wind from other islands. Keep CPV's original
+    # cells so both units stay missing.
+    if spec.code == "CPV":
+        return flat_indices, matrices
+
     # Check population and area weights separately because their weighted cells
     # can differ.
     valid_mask = first_day_wind_valid_mask(variable, flip_latitude)

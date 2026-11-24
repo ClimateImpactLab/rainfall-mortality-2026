@@ -446,6 +446,26 @@ def combine(spec, jobs, overwrite):
         summary.region_id.isin(no_population), "area", "none"
     )
 
+    # A few very small units contain no LandScan or GPW points.
+    # If the whole polygon lies in one climate cell, both weights must be one.
+    # Keep the original source totals at zero and record this in the summary.
+    grid = read_grid(climate_file(spec, "tp_total", spec.grid_year))
+    if spec.single_cell_ids:
+        summary["cell_weight_fallback"] = "none"
+    for region_id in spec.single_cell_ids:
+        admin = expected.loc[expected.region_id == region_id].iloc[0]
+        require(not weights.region_id.eq(region_id).any(), f"{region_id} already has source weights")
+        xmin, ymin, xmax, ymax = admin.geometry.bounds
+        rows, columns, inside = grid.point_indices(np.array([ymin, ymax]), np.array([xmin, xmax]))
+        require(inside.all() and rows[0] == rows[1] and columns[0] == columns[1],
+                f"{region_id} is not entirely inside one climate cell")
+        weights.loc[len(weights)] = {
+            "region_id": region_id, "grid_row": int(rows[0]), "grid_column": int(columns[0]),
+            "population": 0.0, "land_area_km2": 0.0, "popwt": 1.0, "areawt": 1.0,
+        }
+        summary.loc[summary.region_id == region_id, "cell_weight_fallback"] = "only_climate_cell"
+        print(f"{region_id}: both weights use the only climate cell covering the polygon")
+
     # Compare source totals with the portion represented on the ERA5-Land grid
     # Values close to one mean nearly all population or land area is covered
     summary["population_coverage_fraction"] = np.divide(
@@ -503,7 +523,6 @@ def combine(spec, jobs, overwrite):
 
     # Add ERA5-Land latitude and longitude for each grid cell
     # This makes the final file easier to inspect without reopening the NetCDF
-    grid = read_grid(climate_file(spec, "tp_total", spec.grid_year))
     rows = weights.grid_row.to_numpy(dtype="int64")
     columns = weights.grid_column.to_numpy(dtype="int64")
     weights["latitude"] = grid.latitude[rows]
