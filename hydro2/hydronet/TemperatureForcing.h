@@ -34,17 +34,12 @@ private:
   static constexpr double FREEZING_C = 0.0;
 
   struct Month {
-    std::unique_ptr<netCDF::NcFile> precipFile;
-    std::unique_ptr<netCDF::NcFile> tminFile;
-    std::unique_ptr<netCDF::NcFile> tmaxFile;
-
-    netCDF::NcVar precipVar;
-    netCDF::NcVar tminVar;
-    netCDF::NcVar tmaxVar;
+    std::string precipPath;
+    std::string tminPath;
+    std::string tmaxPath;
 
     unsigned firstDay;
     unsigned nday;
-
     bool tminIsKelvin;
     bool tmaxIsKelvin;
   };
@@ -85,6 +80,11 @@ private:
   std::vector<float> tminDay;
   std::vector<float> tmaxDay;
   int loadedDay;
+  int loadedMonth;
+
+  std::string precipVariableName;
+  std::string tminVariableName;
+  std::string tmaxVariableName;
 
   std::map<HydroNode*, NodeState> nodeStates;
 
@@ -261,29 +261,69 @@ private:
                     : static_cast<double>(value);
   }
 
+  void closeMonth(std::size_t monthIndex) {
+    Month* month = months[monthIndex].get();
+
+    // Clear variable handles before closing their parent files.
+    month->precipVar = netCDF::NcVar();
+    month->tminVar = netCDF::NcVar();
+    month->tmaxVar = netCDF::NcVar();
+    
+    month->precipFile.reset();
+    month->tminFile.reset();
+    month->tmaxFile.reset();
+  }
+
+  void openMonth(std::size_t monthIndex) {
+    Month* month = months[monthIndex].get();
+    
+    month->precipFile.reset(new netCDF::NcFile(month->precipPath, netCDF::NcFile::read));
+    month->tminFile.reset(new netCDF::NcFile(month->tminPath, netCDF::NcFile::read));
+    month->tmaxFile.reset(new netCDF::NcFile(month->tmaxPath, netCDF::NcFile::read));
+    
+    month->precipVar =
+      month->precipFile->getVar(precipVariableName);
+    month->tminVar =
+      month->tminFile->getVar(tminVariableName);
+    month->tmaxVar =
+      month->tmaxFile->getVar(tmaxVariableName);
+    
+    checkVar(month->precipVar, precipVariableName);
+    checkVar(month->tminVar, tminVariableName);
+    checkVar(month->tmaxVar, tmaxVariableName);
+  }
+
   void loadDay(unsigned day) {
     if (static_cast<int>(day) == loadedDay)
       return;
 
     if (day >= nday)
-      throw std::runtime_error(
-        "MonthlyTemperatureHydroForcing: day out of range.");
+      throw std::runtime_error("MonthlyTemperatureHydroForcing: day out of range.");
 
-    Month* selected = NULL;
+    std::size_t selectedIndex = months.size();
 
     for (std::size_t i = 0; i < months.size(); ++i) {
       Month* month = months[i].get();
-
+      
       if (day >= month->firstDay &&
-          day < month->firstDay + month->nday) {
-        selected = month;
-        break;
+	  day < month->firstDay + month->nday) {
+	selectedIndex = i;
+	break;
       }
     }
 
-    if (selected == NULL)
+    if (selectedIndex == months.size())
       throw std::runtime_error("Could not find monthly forcing file for day.");
 
+    if (loadedMonth != static_cast<int>(selectedIndex)) {
+      if (loadedMonth >= 0)
+	closeMonth(static_cast<std::size_t>(loadedMonth));
+
+      openMonth(selectedIndex);
+      loadedMonth = static_cast<int>(selectedIndex);
+    }
+
+    Month* selected = months[selectedIndex].get();
     unsigned localDay = day - selected->firstDay;
 
     std::vector<size_t> start(3);
@@ -398,7 +438,11 @@ public:
     : nday(0),
       nlat(0),
       nlon(0),
-      loadedDay(-1) {
+      loadedDay(-1),
+      loadedMonth(-1),
+      precipVariableName(precipVarName),
+      tminVariableName(tminVarName),
+      tmaxVariableName(tmaxVarName) {
 
     if (firstYear > lastYear ||
         (firstYear == lastYear && firstMonth > lastMonth)) {
@@ -422,16 +466,13 @@ public:
       std::string tmaxPath =
         monthlyPath(tmaxDirectory, tmaxPrefix, year, month);
 
-      entry->precipFile.reset(
-        new netCDF::NcFile(precipPath, netCDF::NcFile::read));
-      entry->tminFile.reset(
-        new netCDF::NcFile(tminPath, netCDF::NcFile::read));
-      entry->tmaxFile.reset(
-        new netCDF::NcFile(tmaxPath, netCDF::NcFile::read));
+      netCDF::NcFile precipFile(precipPath, netCDF::NcFile::read);
+      netCDF::NcFile tminFile(tminPath, netCDF::NcFile::read);
+      netCDF::NcFile tmaxFile(tmaxPath, netCDF::NcFile::read);
 
-      entry->precipVar = entry->precipFile->getVar(precipVarName);
-      entry->tminVar = entry->tminFile->getVar(tminVarName);
-      entry->tmaxVar = entry->tmaxFile->getVar(tmaxVarName);
+      netCDF::NcVar precipVar = precipFile.getVar(precipVarName);
+      netCDF::NcVar tminVar = tminFile.getVar(tminVarName);
+      netCDF::NcVar tmaxVar = tmaxFile.getVar(tmaxVarName);
 
       checkVar(entry->precipVar, precipVarName);
       checkVar(entry->tminVar, tminVarName);
@@ -479,12 +520,25 @@ public:
       checkCubeDimensions(
         entry->tmaxVar, tmaxVarName, monthDays, nlat, nlon);
 
+      entry->precipPath = precipPath;
+      entry->tminPath = tminPath;
+      entry->tmaxPath = tmaxPath;
+
       entry->firstDay = nday;
       entry->nday = monthDays;
       entry->tminIsKelvin = temperatureIsKelvin(entry->tminVar, tminVarName);
       entry->tmaxIsKelvin = temperatureIsKelvin(entry->tmaxVar, tmaxVarName);
 
       nday += monthDays;
+
+      entry->precipVar = netCDF::NcVar();
+      entry->tminVar = netCDF::NcVar();
+      entry->tmaxVar = netCDF::NcVar();
+
+      entry->precipFile.reset();
+      entry->tminFile.reset();
+      entry->tmaxFile.reset();
+
       months.push_back(std::move(entry));
 
       ++month;
