@@ -381,6 +381,37 @@ namespace openworld {
       return NULL;
     }
 
+    set<HydroNode*> collectReachableNodes() {
+      set<HydroNode*> seen;
+      queue<HydroNode*> pending;
+
+      const map<unsigned, HydroNode*>& surfaces = getSurfaceNodes();
+      for (map<unsigned, HydroNode*>::const_iterator it = surfaces.begin();
+	   it != surfaces.end(); ++it) {
+	if (it->second != NULL)
+	  pending.push(it->second);
+      }
+
+      while (!pending.empty()) {
+	HydroNode* node = pending.front();
+	pending.pop();
+	
+	if (node == NULL || seen.count(node))
+	  continue;
+
+	seen.insert(node);
+
+	const list<pair<double, HydroNode*> >& edges = node->getEdges();
+	for (list<pair<double, HydroNode*> >::const_iterator eit = edges.begin();
+	     eit != edges.end(); ++eit) {
+	  if (eit->second != NULL && !seen.count(eit->second))
+	    pending.push(eit->second);
+	}
+      }
+      
+      return seen;
+    }
+
     void generate(DInfinityMap& direction_fine, GeographicMap<bool>& mask_fine, GeographicMap<double>& slope_fine, double min_dist, vector<HydroOutputNode*> outputNodes) {
       HydroOutputNode* outside = new HydroOutputNode(0., 0.);
       HydroOutputNode* ignore = new HydroOutputNode(0., 0.);

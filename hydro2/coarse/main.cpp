@@ -219,7 +219,8 @@ int main(int argc, const char* argv[])
     double proc_lat_min = max(lat_min + 0.1, lat_min + 0.1 / 2);
     cout << proc_lon_min << " : " << proc_lon_max << ", " << proc_lat_min << " : " << proc_lat_max << endl;
     
-    std::vector<HydroOutputNode*> outputNodes = loadKnownOutputNodes((datadir / "streamflows/grdd-meta.csv").c_str());
+    // std::vector<HydroOutputNode*> outputNodes = loadKnownOutputNodes((datadir / "streamflows/grdd-meta.csv").c_str());
+    std::vector<HydroOutputNode*> outputNodes;
 
     if (regenerate) {
       net.generate(*direction_fine, mask_fine, *slope_fine, 10000.0, outputNodes);
@@ -259,9 +260,15 @@ int main(int argc, const char* argv[])
 					     2025, 12,
 					     net);
 
-      HydroRunner runner(net, forcing, forcing.days(), 24);
-      HydroRunResult result = runner.run();
+      MonthlyHydroNetCDFOutput output(net,
+				      (datadir / "era5_lsm.nc").c_str(),
+				      "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/processed/daily",
+				      1950, 1);
 
+      HydroRunner runner(net, forcing, forcing.days(), 24);
+      runner.run(output);
+
+      
       writeRiverRunoffNetCDF(1, (datadir / "era5_lsm.nc").c_str(), "lsm",
 			     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/processed/daily/river_flow.nc4",
 			     result);

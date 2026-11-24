@@ -36,6 +36,16 @@ struct HydroRunResult {
   map<HydroNode*, vector<double> > storage_m3_end_day;
 };
 
+struct HydroDailyOutput {
+  virtual ~HydroDailyOutput() {}
+
+  virtual void writeDay(
+      unsigned day,
+      const std::map<HydroNode*, double>& river_m3_day,
+      const std::map<HydroOutputNode*, double>& output_m3_day,
+      const std::map<HydroNode*, double>& storage_m3_end_day) = 0;
+};
+
 class HydroRunner {
 private:
   static constexpr double secondsPerDay = 86400.0;
@@ -47,37 +57,6 @@ private:
 
   set<HydroNode*> nodes;
   map<HydroNode*, double> storage_m3;
-
-  set<HydroNode*> collectReachableNodes() {
-    set<HydroNode*> seen;
-    queue<HydroNode*> pending;
-
-    const map<unsigned, HydroNode*>& surfaces = net.getSurfaceNodes();
-    for (map<unsigned, HydroNode*>::const_iterator it = surfaces.begin();
-         it != surfaces.end(); ++it) {
-      if (it->second != NULL)
-        pending.push(it->second);
-    }
-
-    while (!pending.empty()) {
-      HydroNode* node = pending.front();
-      pending.pop();
-
-      if (node == NULL || seen.count(node))
-        continue;
-
-      seen.insert(node);
-
-      const list<pair<double, HydroNode*> >& edges = node->getEdges();
-      for (list<pair<double, HydroNode*> >::const_iterator eit = edges.begin();
-           eit != edges.end(); ++eit) {
-        if (eit->second != NULL && !seen.count(eit->second))
-          pending.push(eit->second);
-      }
-    }
-
-    return seen;
-  }
 
   void addDailySurfaceRunoff(unsigned day) {
     const map<unsigned, HydroNode*>& surfaces = net.getSurfaceNodes();
@@ -102,7 +81,9 @@ private:
     }
   }
 
-  void routeSubstep(HydroRunResult& result, unsigned day, double dt_seconds) {
+  void routeSubstep(std::map<HydroNode*, double>& riverToday,
+		    std::map<HydroOutputNode*, double>& outputToday,
+		    double dt_seconds) {
     map<HydroNode*, double> arrivals_m3;
 
     for (set<HydroNode*>::const_iterator it = nodes.begin();
@@ -136,7 +117,7 @@ private:
       storage_m3[node] -= out_m3;
 
       if (node->isRiver())
-        result.river_m3_day[node][day] += out_m3;
+	riverToday[node] += out_m3;
 
       const list<pair<double, HydroNode*> >& edges = node->getEdges();
 
@@ -151,7 +132,7 @@ private:
         double routed_m3 = weight * out_m3;
 
         if (dest->isOutput()) {
-          result.output_m3_day[(HydroOutputNode*) dest][day] += routed_m3;
+          outputToday[static_cast<HydroOutputNode*>(dest)] += routed_m3;
         } else {
           arrivals_m3[dest] += routed_m3;
         }
@@ -212,7 +193,7 @@ public:
     if (substepsPerDay == 0)
       throw std::runtime_error("HydroRunner: substepsPerDay must be positive.");
 
-    nodes = collectReachableNodes();
+    nodes = net.collectReachableNodes();
 
     for (set<HydroNode*>::const_iterator it = nodes.begin();
          it != nodes.end(); ++it) {
@@ -220,41 +201,25 @@ public:
     }
   }
 
-  HydroRunResult run() {
+  void run(HydroDailyOutput& output) {
     HydroRunResult result;
 
     std::chrono::steady_clock::time_point start =
       std::chrono::steady_clock::now();
-
-    for (set<HydroNode*>::const_iterator it = nodes.begin();
-         it != nodes.end(); ++it) {
-      HydroNode* node = *it;
-
-      // Record storage for every node, regardless of node type.
-      result.storage_m3_end_day[node] = vector<double>(ndays, 0.0);
-
-      if (node->isRiver())
-        result.river_m3_day[node] = vector<double>(ndays, 0.0);
-
-      if (node->isOutput())
-        result.output_m3_day[(HydroOutputNode*) node] =
-          vector<double>(ndays, 0.0);
-    }
 
     double dt_seconds = secondsPerDay / (double) substepsPerDay;
 
     for (unsigned day = 0; day < ndays; ++day) {
       addDailySurfaceRunoff(day);
 
-      for (unsigned sub = 0; sub < substepsPerDay; ++sub)
-        routeSubstep(result, day, dt_seconds);
+      std::map<HydroNode*, double> riverToday;
+      std::map<HydroOutputNode*, double> outputToday;
 
-      // Snapshot storage after all routing for this day.
-      for (set<HydroNode*>::const_iterator it = nodes.begin();
-	   it != nodes.end(); ++it) {
-	HydroNode* node = *it;
-	result.storage_m3_end_day[node][day] = storage_m3[node];
-      }
+      for (unsigned sub = 0; sub < substepsPerDay; ++sub)
+	routeSubstep(riverToday, dt_seconds);
+
+      // storage_m3 is already the end-of-day node state.
+      output.writeDay(day, riverToday, outputToday, storage_m3);
 
       if (day == 0 || (day + 1) % 10 == 0 || day + 1 == ndays)
 	reportProgress(day + 1, start);

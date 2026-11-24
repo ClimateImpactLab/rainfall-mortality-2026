@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <memory>
+#include <sstream>
+#include <iomanip>
 
 using namespace netCDF;
 
@@ -151,8 +154,7 @@ void writeRiverRunoffNetCDF(const std::string& weatherPath,
       continue;
 
     if (dailyStorage.size() != nday)
-      throw std::runtime_error(
-			       "Storage record day count does not match weather NetCDF.");
+      throw std::runtime_error("Storage record day count does not match weather NetCDF.");
 
     int latIndex = nearestGridIndex(lats, node->getLatitude().getValue());
     int lonIndex = nearestGridIndex(lons, node->getLongitude().getValue());
@@ -173,7 +175,7 @@ void writeRiverRunoffNetCDF(const std::string& weatherPath,
 	(size_t) lonIndex;
       
       // Sum all HydroNet nodes that fall in this forcing-grid cell.
-      storageValues[index] += storage_m3;
+      storageValues[index] += static_cast<float>(storage_m3);
     }
   }
 
@@ -205,7 +207,7 @@ void writeRiverRunoffNetCDF(const std::string& weatherPath,
 
   NcVar riverVar = output.addVar(
     outputVariableName,
-    ncDouble,
+    ncFloat,
     std::vector<NcDim>{dayDim, latDim, lonDim});
 
   riverVar.putAtt("long_name",
@@ -213,8 +215,12 @@ void writeRiverRunoffNetCDF(const std::string& weatherPath,
   riverVar.putAtt("units", "m3 day-1");
   riverVar.putVar(riverValues.data());
 
+  NcVar outputVar = output.addVar("output_m3_day",
+				  ncFloat,
+				  std::vector<NcDim>{dayDim, latDim, lonDim});
+
   NcVar storageVar = output.addVar("stored_water_m3",
-				   ncDouble,
+				   ncFloat,
 				   std::vector<NcDim>{dayDim, latDim, lonDim});
   
   storageVar.putAtt("long_name",
@@ -405,5 +411,256 @@ void writeRiverRunoffNetCDF(size_t nday, const std::string& gridPath,
 
   storageVar.putVar(storageValues.data());
 }
+
+class MonthlyHydroNetCDFOutput : public HydroDailyOutput {
+private:
+  std::string gridPath;
+  std::string outputDirectory;
+  int firstYear, firstMonth;
+
+  unsigned currentMonthFirstDay;
+  unsigned currentMonthDays;
+  int currentYear;
+  int currentMonth
+
+  // Current output month/file and its NetCDF variables.
+  std::unique_ptr<NcFile> output;
+  NcVar riverVar, outputVar, storageVar;
+  size_t nlat, nlon;
+  unsigned monthFirstDay;
+  unsigned monthDays;
+
+  std::vector<HydroOutputNode*> outputNodes;
+  std::map<HydroOutputNode*, size_t> outputNodeIndex;
+
+  NcVar outputFlowVar;
+  std::vector<float> outputFlowValues;
+
+  std::vector<float> riverValues;    // one day only
+  std::vector<float> storageValues;  // one day only
+
+  std::map<HydroNode*, size_t> riverGridIndex;
+  std::map<HydroOutputNode*, size_t> outputGridIndex;
+  std::map<HydroNode*, size_t> storageGridIndex;
+
+  void openMonthForDay(unsigned absoluteDay);
+  void closeMonth();
+
+public:
+  MonthlyHydroNetCDFOutput(HydroNet& net,
+                           const std::string& gridPath,
+                           const std::string& outputDirectory,
+                           int firstYear, int firstMonth) {
+    for (HydroNode* node : net.collectReachableNodes()) {
+      int latIndex = nearestGridIndex(lats, node->getLatitude().getValue());
+      int lonIndex = nearestGridIndex(lons, node->getLongitude().getValue());
+
+      if (latIndex < 0 || lonIndex < 0)
+	continue;
+
+      size_t index =
+	static_cast<size_t>(latIndex) * nlon +
+	static_cast<size_t>(lonIndex);
+      
+      storageGridIndex[node] = index;
+      
+      if (node->isRiver())
+	riverGridIndex[node] = index;
+      
+      if (node->isOutput())
+	outputGridIndex[static_cast<HydroOutputNode*>(node)] = index;
+    }
+
+    for (std::set<HydroNode*>::const_iterator it = nodes.begin();
+	 it != nodes.end(); ++it) {
+      HydroNode* node = *it;
+      
+      if (node != NULL && node->isOutput()) {
+	HydroOutputNode* outputNode =
+	  static_cast<HydroOutputNode*>(node);
+	
+	outputNodeIndex[outputNode] = outputNodes.size();
+	outputNodes.push_back(outputNode);
+      }
+    }
+
+    outputFlowValues.assign(outputNodes.size(), 0.0f);
+  }
+
+  ~MonthlyHydroNetCDFOutput() {
+    closeMonth();
+  }
+
+  void closeMonth() {
+    riverVar = NcVar();
+    storageVar = NcVar();
+    outputFlowVar = NcVar();
+    
+    output.reset();
+  }
+
+  void openMonthForDay(unsigned absoluteDay) {
+    int year = firstYear;
+    int month = firstMonth;
+    unsigned firstDayOfMonth = 0;
+    
+    while (true) {
+      unsigned nDays = daysInMonth(year, month);
+      
+      if (absoluteDay < firstDayOfMonth + nDays) {
+	currentYear = year;
+	currentMonth = month;
+	currentMonthFirstDay = firstDayOfMonth;
+	currentMonthDays = nDays;
+	break;
+      }
+
+      firstDayOfMonth += nDays;
+
+      ++month;
+      if (month == 13) {
+	month = 1;
+	++year;
+      }
+    }
+
+    std::ostringstream filename;
+    filename << outputDirectory;
+    if (!outputDirectory.empty() &&
+	outputDirectory[outputDirectory.size() - 1] != '/')
+      filename << '/';
+    
+    filename << "hydronet_"
+	     << currentYear << "_"
+	     << std::setw(2) << std::setfill('0') << currentMonth
+	     << ".nc4";
+
+    output.reset(new NcFile(filename.str(), NcFile::replace));
+
+    NcDim dayDim = output->addDim("day", currentMonthDays);
+    NcDim latDim = output->addDim("latitude", nlat);
+    NcDim lonDim = output->addDim("longitude", nlon);
+    NcDim outputNodeDim = output->addDim("output_node", outputNodes.size());
+
+    NcVar outLat = output->addVar("latitude", ncDouble, latDim);
+    NcVar outLon = output->addVar("longitude", ncDouble, lonDim);
+    
+    outLat.putVar(lats.data());
+    outLon.putVar(lons.data());
+
+    // A continuous day index from the first simulation day.
+    std::vector<int> times(currentMonthDays);
+    for (unsigned d = 0; d < currentMonthDays; ++d)
+      times[d] = static_cast<int>(currentMonthFirstDay + d);
+
+    NcVar timeVar = output->addVar("day", ncInt, dayDim);
+    timeVar.putVar(times.data());
+    timeVar.putAtt("long_name", "simulation day index");
+    timeVar.putAtt("units", "days since simulation start");
+    
+    riverVar = output->addVar("river_m3_day",
+			      ncFloat,
+			      std::vector<NcDim>{dayDim, latDim, lonDim});
+
+    storageVar = output->addVar("stored_water_m3",
+				ncFloat,
+				std::vector<NcDim>{dayDim, latDim, lonDim});
+
+    riverVar.putAtt("units", "m3 day-1");
+    storageVar.putAtt("units", "m3");
+
+    if (!outputNodes.empty()) {
+      std::vector<double> outputLats(outputNodes.size());
+      std::vector<double> outputLons(outputNodes.size());
+
+      for (size_t i = 0; i < outputNodes.size(); ++i) {
+	outputLats[i] = outputNodes[i]->getLatitude().getValue();
+	outputLons[i] = outputNodes[i]->getLongitude().getValue();
+      }
+
+      NcVar outputLatVar =
+	output->addVar("output_latitude", ncDouble, outputNodeDim);
+      NcVar outputLonVar =
+	output->addVar("output_longitude", ncDouble, outputNodeDim);
+
+      outputLatVar.putVar(outputLats.data());
+      outputLonVar.putVar(outputLons.data());
+
+      outputLatVar.putAtt("units", "degrees_north");
+      outputLonVar.putAtt("units", "degrees_east");
+
+      outputFlowVar = output->addVar("output_m3_day",
+				     ncFloat,
+				     std::vector<NcDim>{dayDim, outputNodeDim});
+
+      outputFlowVar.putAtt("long_name",
+			   "daily routed discharge arriving at output node");
+      outputFlowVar.putAtt("units", "m3 day-1");
+      outputFlowVar.putAtt("coordinates",
+			   "output_latitude output_longitude");
+    }
+  }
+
+  void writeDay(
+      unsigned day,
+      const std::map<HydroNode*, double>& river_m3_day,
+      const std::map<HydroNode*, double>& output_m3_day,
+      const std::map<HydroNode*, double>& storage_m3_end_day) {
+
+      if (!output || day < monthFirstDay || day >= monthFirstDay + monthDays) {
+	closeMonth();
+	openMonthForDay(day);
+      }
+
+      std::fill(riverValues.begin(), riverValues.end(), 0.0);
+      std::fill(storageValues.begin(), storageValues.end(), 0.0);
+
+      for (std::map<HydroNode*, double>::const_iterator it =
+	     river_m3_day.begin();
+	   it != river_m3_day.end(); ++it) {
+	std::map<HydroNode*, size_t>::const_iterator pos =
+	  riverGridIndex.find(it->first);
+	
+	if (pos != riverGridIndex.end() && std::isfinite(it->second))
+	  riverValues[pos->second] += it->second;
+      }
+
+      for (std::map<HydroNode*, double>::const_iterator it =
+	     storage_m3_end_day.begin();
+	   it != storage_m3_end_day.end(); ++it) {
+	std::map<HydroNode*, size_t>::const_iterator pos =
+	  storageGridIndex.find(it->first);
+	
+	if (pos != storageGridIndex.end() && std::isfinite(it->second))
+	  storageValues[pos->second] += it->second;
+      }
+      
+      std::fill(outputFlowValues.begin(), outputFlowValues.end(), 0.0f);
+
+      for (std::map<HydroOutputNode*, double>::const_iterator it =
+	     output_m3_day.begin();
+	   it != output_m3_day.end(); ++it) {
+	std::map<HydroOutputNode*, size_t>::const_iterator pos =
+	  outputNodeIndex.find(it->first);
+	
+	if (pos != outputNodeIndex.end() && std::isfinite(it->second))
+	  outputFlowValues[pos->second] += static_cast<float>(it->second);
+      }
+
+      const size_t localDay = day - monthFirstDay;
+
+      std::vector<size_t> start{localDay, 0, 0};
+      std::vector<size_t> count{1, nlat, nlon};
+
+      riverVar.putVar(start, count, riverValues.data());
+      storageVar.putVar(start, count, storageValues.data());
+
+      std::vector<size_t> outputStart{localDay, 0};
+      std::vector<size_t> outputCount{1, outputNodes.size()};
+
+      if (!outputNodes.empty())
+	outputFlowVar.putVar(outputStart, outputCount, outputFlowValues.data());
+  }
+};
 
 } // namespace openworld
