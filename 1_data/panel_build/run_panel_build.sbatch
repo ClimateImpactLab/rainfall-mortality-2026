@@ -5,39 +5,45 @@
 #SBATCH --time=04:00:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=1
-#SBATCH --output=/project/cil/home_dirs/mdefranciosi/repos/rainfall-mortality-2026/1_data/panel_build/logs/panel_build_%j.out
-#SBATCH --error=/project/cil/home_dirs/mdefranciosi/repos/rainfall-mortality-2026/1_data/panel_build/logs/panel_build_%j.err
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 
 set -euo pipefail
 
-# Run the full panel build.
+# Full panel build. Writes to annual/panel_update/ (see paths.R).
 
 cd /project/cil/home_dirs/mdefranciosi/repos/rainfall-mortality-2026/1_data/panel_build
 
+# Create the code-side log folder before opening this job's logs.
+LOG_DIR="$PWD/logs"
+mkdir -p "$LOG_DIR"
+exec >"$LOG_DIR/panel_build_${SLURM_JOB_ID}.out" 2>"$LOG_DIR/panel_build_${SLURM_JOB_ID}.err"
+
 R=/project/cil/home_dirs/mdefranciosi/envs/mortality-rainfall-env/bin/Rscript
 
-# Prepare the old panel and new-country mortality rows.
-$R scripts/01_trim_old_panel.R
-$R scripts/02_prepare_new_countries.R
+# 1. Save 01_panel_mortality.csv: mortality, population and geography only
+$R scripts/1a_trim_old_panel.R
+$R scripts/1b_prepare_new_countries.R
+$R scripts/1c_combine_panels.R
 
-# Add ERA5-Land climate and ADM1 income to the new countries.
-$R scripts/03_merge_climate.R
-$R scripts/04_merge_adm1_income.R
+# 2. Save 02_panel_climate.csv; leave 01 unchanged
+$R scripts/2a_add_new_country_climate.R
+$R scripts/2b_add_chirps.R
+$R scripts/2c_add_adm1_climate.R
+# Daily-rain diagnostics are separate from the regression climate terms.
+# $R scripts/2d_add_precip_extremes.R
+$R scripts/2e_add_wind.R
+$R scripts/2f_add_rain_wind_overlap.R
+$R scripts/2g_add_drought_terms.R
 
-# Append old and new countries, then add other climate variables.
-$R scripts/05_build_panel.R
-$R scripts/06_add_chirps.R
-$R scripts/07_add_adm1_climate.R
-$R scripts/07b_add_admin_precip_exposure.R
-$R scripts/07c_add_wind_exposure.R
-$R scripts/07d_add_daily_rain_wind_overlap.R
+# 3. Save 03_panel_full.csv; leave 01 and 02 unchanged
+$R scripts/3a_add_adm1_income.R
+$R scripts/3b_add_kummu_income.R
+$R scripts/3c_add_urban.R
+$R scripts/3d_add_elevation.R
+$R scripts/3e_add_pop_density.R
+$R scripts/3f_add_ag_land.R
 
-# Add urban, income, elevation, and density variables.
-$R scripts/08_add_urban.R
-$R scripts/09_add_kummu_income.R
-$R scripts/10_add_elevation.R
-$R scripts/10b_add_pop_density.R
-
-# Check the final CSV panel and write RDS/Stata copies.
-$R scripts/11_check_panel.R
-$R scripts/12_export_panel.R
+# 4. Check and export
+$R scripts/4a_check_panel.R
+$R scripts/4b_export_panel.R
