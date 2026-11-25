@@ -202,8 +202,6 @@ public:
   }
 
   void run(HydroDailyOutput& output) {
-    HydroRunResult result;
-
     std::chrono::steady_clock::time_point start =
       std::chrono::steady_clock::now();
 
@@ -216,7 +214,7 @@ public:
       std::map<HydroOutputNode*, double> outputToday;
 
       for (unsigned sub = 0; sub < substepsPerDay; ++sub)
-	routeSubstep(riverToday, dt_seconds);
+	routeSubstep(riverToday, outputToday, dt_seconds);
 
       // storage_m3 is already the end-of-day node state.
       output.writeDay(day, riverToday, outputToday, storage_m3);
@@ -226,8 +224,6 @@ public:
     }
 
     std::cerr << std::endl;
-
-    return result;
   }
 };
 

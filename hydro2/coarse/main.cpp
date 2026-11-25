@@ -268,10 +268,9 @@ int main(int argc, const char* argv[])
       HydroRunner runner(net, forcing, forcing.days(), 24);
       runner.run(output);
 
-      
-      writeRiverRunoffNetCDF(1, (datadir / "era5_lsm.nc").c_str(), "lsm",
-			     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/processed/daily/river_flow.nc4",
-			     result);
+      // writeRiverRunoffNetCDF(1, (datadir / "era5_lsm.nc").c_str(), "lsm",
+      // 			     "/project/cil/gcp/climate/ERA5-LAND-GLOBAL/processed/daily/river_flow.nc4",
+      // 			     result);
 
       // writeRiverRunoffNetCDF((datadir / "global_monthly_flow_1950.nc4").c_str(),
       // 			     "rainfall_flow",
