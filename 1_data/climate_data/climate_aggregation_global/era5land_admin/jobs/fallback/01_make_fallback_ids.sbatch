@@ -14,6 +14,8 @@
 # Write the ERA5-Land fallback ID CSVs.
 #
 # This writes the reviewed region_id lists used by step_02_apply_fallback.py.
+# Optional Python arguments are forwarded, for example --country CAN writes
+# only Canada's list and leaves the other country lists untouched.
 # ======================================================================
 
 set -euo pipefail
@@ -45,5 +47,5 @@ export PYTHONPATH="$PWD:$PWD/aggregation_scripts:$PWD/cell_fallback:${PYTHONPATH
 
 # Print start/end times in the log so the runtime is easy to check.
 echo "start=$(date --iso-8601=seconds)"
-"$PYTHON" cell_fallback/step_01_make_fallback_ids.py
+"$PYTHON" cell_fallback/step_01_make_fallback_ids.py "$@"
 echo "end=$(date --iso-8601=seconds)"

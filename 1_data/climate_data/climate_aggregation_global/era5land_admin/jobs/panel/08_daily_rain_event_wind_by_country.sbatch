@@ -9,14 +9,14 @@
 #SBATCH --mem=16G
 #SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
-#SBATCH --array=0-14
+#SBATCH --array=0-21%10
 
 # ======================================================================
 # Build daily rain-event wind overlap for one country.
 #
-# This is a panel-side check, not part of the main precipitation/temperature run.
-# The Slurm array loops over the country list below.
-# Each array task writes one country file.
+# Each array task handles one country from the list below, not one year.
+# It reads all configured daily years and writes one country event file.
+# At most 10 country jobs run together.
 # ======================================================================
 
 set -euo pipefail
@@ -33,14 +33,13 @@ PYTHON=/project/cil/home_dirs/mdefranciosi/envs/era5land/bin/python
 
 # Slurm uses this index to pick one country from the list.
 COUNTRIES=(
-  AUS BRA CHL CHN COL
-  ECU EU FRA IND JPN
-  KOR MEX PER PHL USA
+  ARG AUS BRA_STABLE BWA CAN CHL CHN COL CPV CRI ECU
+  EU FRA IND JPN KOR MEX PER PHL RWA THA USA
 )
 COUNTRY=${COUNTRIES[$SLURM_ARRAY_TASK_ID]}
 
 # Country outputs are written outside the repo.
-OUT_DIR="/project/cil/gcp/estimation/rainfall-mortality/climate_data/ERA5-LAND-GLOBAL/combined/daily_rain_event_wind_overlap_by_country/$COUNTRY"
+OUT_DIR="/project/cil/gcp/estimation/rainfall-mortality/climate_data/ERA5-LAND-GLOBAL/combined/current_boundaries/daily_rain_event_wind_overlap_by_country/$COUNTRY"
 
 # Keep logs separate by country.
 LOG_DIR="$ROOT/logs/era5land_admin/$COUNTRY/rain_event_wind"

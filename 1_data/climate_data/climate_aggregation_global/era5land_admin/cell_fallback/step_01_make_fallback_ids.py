@@ -18,6 +18,7 @@ Outputs:
       ERA5-LAND-GLOBAL/cell_fallback_ids/
 """
 
+import argparse
 from pathlib import Path
 
 import pandas as pd
@@ -33,6 +34,12 @@ OUTPUT_DIR = OUTPUT_ROOT / PRODUCT / "cell_fallback_ids"
 # Reviewed fallback IDs
 # -----------------------------
 
+# Canada: this island census division has weights but missing climate.
+# It's listed for the distance check, the 0.5-degree limit still applies.
+CAN_MORTALITY_REQUIRED = [
+    ("CAN_2401", "Communaute maritime des Iles-de-la-Madeleine", True),
+]
+
 # Brazil has four nearby coastal cases. These units have weights on cells
 # masked by the ERA5-Land land mask, with valid cells 0.1 to 0.2 degrees away.
 BRA_NEARBY = [
@@ -40,6 +47,14 @@ BRA_NEARBY = [
     "BRA_032_05_0443",
     "BRA_032_21_4018",
     "BRA_032_25_4971",
+]
+
+# Stable Brazil units with weights on cells masked by ERA5-Land.
+BRA_STABLE_MISSING = [
+    "BRA_STABLE_260545",  # Fernando de Noronha
+    "BRA_STABLE_291610",  # Itaparica
+    "BRA_STABLE_291992",  # Madre de Deus
+    "BRA_STABLE_431033",  # Imbé
 ]
 
 # Chile uses nearby cells for two Chiloé island communes
@@ -59,70 +74,44 @@ IND_NEARBY_SUPPORTED = [
     ("IND_221", "Diu", True),
 ]
 
-# Philippines mortality-required island municipalities found in the missing
-# climate checks.
+# Philippines island municipalities found in the missing-climate checks.
+# These now use parent-zone IDs, with the leading zero kept where present.
+# BARMM/SGA units are excluded, matching the mortality sample.
 PHL_MORTALITY_REQUIRED = [
-    ("PHL_1000000000_1004300000_1004314000", "Laguindingan", True),
-    ("PHL_1100000000_1108600000_1108605000", "Sarangani", True),
-    ("PHL_1600000000_1606700000_1606704000", "Burgos", True),
-    ("PHL_1600000000_1606700000_1606719000", "San Francisco", True),
-    ("PHL_1600000000_1606700000_1606721000", "Santa Monica", True),
-    ("PHL_1600000000_1606700000_1606723000", "Socorro", True),
-    ("PHL_1700000000_1705300000_1705302000", "Agutaya", True),
-    ("PHL_1700000000_1705300000_1705308000", "Cagayancillo", True),
-    ("PHL_1700000000_1705300000_1705310000", "Cuyo", True),
-    ("PHL_1700000000_1705300000_1705313000", "Linapacan", True),
-    ("PHL_1700000000_1705300000_1705314000", "Magsaysay", True),
-    ("PHL_1700000000_1705300000_1705321000", "Kalayaan", True),
-    ("PHL_1700000000_1705900000_1705902000", "Banton", True),
-    ("PHL_1700000000_1705900000_1705905000", "Concepcion", True),
-    ("PHL_1700000000_1705900000_1705906000", "Corcuera", True),
-    ("PHL_1700000000_1705900000_1705910000", "Romblon", True),
-    ("PHL_1700000000_1705900000_1705914000", "San Jose", True),
-    ("PHL_1900000000_1900700000_1900712000", "Hadji Muhtamad", True),
-    ("PHL_1900000000_1906600000_1906603000", "Kalingalan Caluang", True),
-    ("PHL_1900000000_1906600000_1906607000", "Old Panamao", True),
-    ("PHL_1900000000_1906600000_1906610000", "Pata", True),
-    ("PHL_1900000000_1906600000_1906612000", "Siasi", True),
-    ("PHL_1900000000_1906600000_1906614000", "Tapul", True),
-    ("PHL_1900000000_1906600000_1906615000", "Tongkil", True),
-    ("PHL_1900000000_1906600000_1906616000", "Panglima Estino", True),
-    ("PHL_1900000000_1906600000_1906617000", "Lugus", True),
-    ("PHL_1900000000_1906600000_1906618000", "Pandami", True),
-    ("PHL_1900000000_1907000000_1907003000", "Mapun", True),
-    ("PHL_1900000000_1907000000_1907004000", "Simunul", True),
-    ("PHL_1900000000_1907000000_1907005000", "Sitangkai", True),
-    ("PHL_1900000000_1907000000_1907006000", "South Ubian", True),
-    ("PHL_1900000000_1907000000_1907008000", "Turtle Islands", True),
-    ("PHL_1900000000_1907000000_1907011000", "Sibutu", True),
+    ("PHL_1004314000", "Laguindingan", True),
+    ("PHL_1108605000", "Sarangani", True),
+    ("PHL_1606704000", "Burgos", True),
+    ("PHL_1606719000", "San Francisco", True),
+    ("PHL_1606721000", "Santa Monica", True),
+    ("PHL_1606723000", "Socorro", True),
+    ("PHL_1705302000", "Agutaya", True),
+    ("PHL_1705308000", "Cagayancillo", True),
+    ("PHL_1705310000", "Cuyo", True),
+    ("PHL_1705313000", "Linapacan", True),
+    ("PHL_1705314000", "Magsaysay", True),
+    ("PHL_1705321000", "Kalayaan", True),
+    ("PHL_1705902000", "Banton", True),
+    ("PHL_1705905000", "Concepcion", True),
+    ("PHL_1705906000", "Corcuera", True),
+    ("PHL_1705910000", "Romblon", True),
+    ("PHL_1705914000", "San Jose", True),
 ]
 
 # Philippines units within the 0.5-degree limit after checking population and
 # area weights.
 PHL_WITHIN_0P5_DEGREES = [
-    ("PHL_1000000000_1004300000_1004314000", "Laguindingan", True),
-    ("PHL_1100000000_1108600000_1108605000", "Sarangani", True),
-    ("PHL_1600000000_1606700000_1606704000", "Burgos", True),
-    ("PHL_1600000000_1606700000_1606719000", "San Francisco", True),
-    ("PHL_1600000000_1606700000_1606721000", "Santa Monica", True),
-    ("PHL_1600000000_1606700000_1606723000", "Socorro", True),
-    ("PHL_1700000000_1705300000_1705313000", "Linapacan", True),
-    ("PHL_1700000000_1705900000_1705902000", "Banton", True),
-    ("PHL_1700000000_1705900000_1705905000", "Concepcion", True),
-    ("PHL_1700000000_1705900000_1705906000", "Corcuera", True),
-    ("PHL_1700000000_1705900000_1705910000", "Romblon", True),
-    ("PHL_1700000000_1705900000_1705914000", "San Jose", True),
-    ("PHL_1900000000_1906600000_1906603000", "Kalingalan Caluang", True),
-    ("PHL_1900000000_1906600000_1906607000", "Old Panamao", True),
-    ("PHL_1900000000_1906600000_1906610000", "Pata", True),
-    ("PHL_1900000000_1906600000_1906612000", "Siasi", True),
-    ("PHL_1900000000_1906600000_1906614000", "Tapul", True),
-    ("PHL_1900000000_1906600000_1906615000", "Tongkil", True),
-    ("PHL_1900000000_1906600000_1906616000", "Panglima Estino", True),
-    ("PHL_1900000000_1906600000_1906617000", "Lugus", True),
-    ("PHL_1900000000_1907000000_1907004000", "Simunul", True),
-    ("PHL_1900000000_1907000000_1907006000", "South Ubian", True),
-    ("PHL_1900000000_1907000000_1907008000", "Turtle Islands", True),
+    ("PHL_1004314000", "Laguindingan", True),
+    ("PHL_1108605000", "Sarangani", True),
+    ("PHL_1606704000", "Burgos", True),
+    ("PHL_1606719000", "San Francisco", True),
+    ("PHL_1606721000", "Santa Monica", True),
+    ("PHL_1606723000", "Socorro", True),
+    ("PHL_1705313000", "Linapacan", True),
+    ("PHL_1705902000", "Banton", True),
+    ("PHL_1705905000", "Concepcion", True),
+    ("PHL_1705906000", "Corcuera", True),
+    ("PHL_1705910000", "Romblon", True),
+    ("PHL_1705914000", "San Jose", True),
 ]
 
 # Nantucket is the only USA unit from the mortality-required list kept here.
@@ -138,7 +127,7 @@ USA_MORTALITY_REQUIRED = [
 # -----------------------------
 
 def id_only(region_ids):
-    # Brazil only needs the IDs here; names are documented in the detailed check CSV.
+    # Brazil only needs the IDs here, the names are in the detailed check CSV.
     return pd.DataFrame({"region_id": region_ids})
 
 
@@ -156,20 +145,30 @@ def write_csv(name, frame):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--country", choices=("BRA", "BRA_STABLE", "CAN", "CHL", "IND", "PHL", "USA"),
+        help="Write only this country's lists; omit to write all reviewed lists",
+    )
+    args = parser.parse_args()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Nearby lists are the IDs we actually pass to step 02 when applying the
-    # 0.5-degree rule.
-    write_csv("bra_global_nearby.csv", id_only(BRA_NEARBY))
-    write_csv("ind_nearby_supported.csv", with_names(IND_NEARBY_SUPPORTED))
-    write_csv("phl_within_0p5_degrees.csv", with_names(PHL_WITHIN_0P5_DEGREES))
-
-    # Mortality-required lists keep the larger reviewed set, including units
-    # that may stay missing because the nearest valid cell is too far away.
-    write_csv("chl_mortality_required.csv", with_names(CHL_MORTALITY_REQUIRED))
-    write_csv("ind_mortality_required.csv", with_names(IND_MORTALITY_REQUIRED))
-    write_csv("phl_mortality_required.csv", with_names(PHL_MORTALITY_REQUIRED))
-    write_csv("usa_mortality_required.csv", with_names(USA_MORTALITY_REQUIRED))
+    # With --country, only that country's lists are rewritten. Required lists
+    # can include units too far from a valid cell, step 02 decides on distance.
+    outputs = [
+        ("CAN", "can_mortality_required.csv", with_names(CAN_MORTALITY_REQUIRED)),
+        ("BRA", "bra_global_nearby.csv", id_only(BRA_NEARBY)),
+        ("BRA_STABLE", "bra_stable_missing.csv", id_only(BRA_STABLE_MISSING)),
+        ("IND", "ind_nearby_supported.csv", with_names(IND_NEARBY_SUPPORTED)),
+        ("PHL", "phl_within_0p5_degrees.csv", with_names(PHL_WITHIN_0P5_DEGREES)),
+        ("CHL", "chl_mortality_required.csv", with_names(CHL_MORTALITY_REQUIRED)),
+        ("IND", "ind_mortality_required.csv", with_names(IND_MORTALITY_REQUIRED)),
+        ("PHL", "phl_mortality_required.csv", with_names(PHL_MORTALITY_REQUIRED)),
+        ("USA", "usa_mortality_required.csv", with_names(USA_MORTALITY_REQUIRED)),
+    ]
+    for code, name, frame in outputs:
+        if args.country is None or args.country == code:
+            write_csv(name, frame)
 
 
 if __name__ == "__main__":

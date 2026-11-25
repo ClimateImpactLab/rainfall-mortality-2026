@@ -406,6 +406,14 @@ def normalize_weights(weights, summary):
     weights = weights.copy()
     summary = summary.copy()
 
+    # CHIRPS stops at 50S and 50N. A unit with any LandScan population or GPW
+    # land area outside that band gets no weights, so its precipitation is missing.
+    outside = (
+        (summary.population_covered < summary.population_total_landscan2011 * (1 - 1e-9))
+        | (summary.land_area_covered_km2 < summary.land_area_total_gpw2010 * (1 - 1e-9))
+    )
+    weights = weights.loc[~weights.region_id.isin(summary.loc[outside, "region_id"])]
+
     # Total population and land area represented across CHIRPS cells within
     # each admin unit.
     pop_total = weights.groupby("region_id").population.transform("sum")
@@ -463,16 +471,10 @@ def normalize_weights(weights, summary):
         ["popwt_sum", "areawt_sum", "climate_grid_cells"]
     ].fillna(0)
 
-    # Mark admin units with incomplete or no CHIRPS coverage.
+    # Mark units cut by the 50S/50N edge and units with no LandScan or GPW point.
     summary["coverage_status"] = "full"
-
-    partial = (
-        (summary.population_coverage_fraction < 0.999)
-        | (summary.area_coverage_fraction < 0.999)
-    )
-
-    summary.loc[partial, "coverage_status"] = "partial"
     summary.loc[summary.areawt_sum == 0, "coverage_status"] = "uncovered"
+    summary.loc[outside, "coverage_status"] = "outside_chirps"
 
     return weights, summary
 
@@ -548,7 +550,7 @@ def combine(spec, parts, overwrite):
     weights, summary = handle_uncovered_admins(spec, weights, summary)
 
     # Every admin unit with a CHIRPS cell should have both weights sum to one.
-    covered = summary.coverage_status != "uncovered"
+    covered = ~summary.coverage_status.isin(["uncovered", "outside_chirps"])
     require(np.allclose(summary.loc[covered, "popwt_sum"], 1), "Population weights do not sum to one")
     require(np.allclose(summary.loc[covered, "areawt_sum"], 1), "Area weights do not sum to one")
 

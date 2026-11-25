@@ -7,7 +7,7 @@ overlap checks.
 This folder does not aggregate raw rasters or NetCDFs. The daily and annual
 admin climate files already exist before these scripts run.
 
-This folder has three separate parts:
+This folder has four separate parts:
 
 1. `00`-`02` add annual ERA5-Land precipitation and temperature to a copy of
    the old Carleton-style global mortality panel through 2010.
@@ -15,9 +15,11 @@ This folder has three separate parts:
    [1_data/panel_build](../../../../panel_build).
 3. `04`-`05` build daily rain/wind overlap event files that are read later by
    [1_data/panel_build](../../../../panel_build).
+4. `06` builds annual drought terms. [1_data/panel_build](../../../../panel_build)
+   runs its functions on the panel's own admin units.
 
 Wind controls in the final panel come from
-[1_data/panel_build/scripts/07c_add_wind_exposure.R](../../../../panel_build/scripts/07c_add_wind_exposure.R).
+[1_data/panel_build/scripts/2e_add_wind.R](../../../../panel_build/scripts/2e_add_wind.R).
 That script reads the annual wind file from the wind aggregation code, not the
 rain/wind event files made here.
 
@@ -127,7 +129,7 @@ era5land_admin_precip_exposure_static.csv
 That long-run file is read by:
 
 ```text
-1_data/panel_build/scripts/07b_add_admin_precip_exposure.R
+1_data/panel_build/scripts/2d_add_precip_extremes.R
 ```
 
 and merged into the final panel.
@@ -141,7 +143,7 @@ ERA5-Land wind. They write event-level data. The admin-year variables used in
 the mortality panel are added later by:
 
 ```text
-1_data/panel_build/scripts/07d_add_daily_rain_wind_overlap.R
+1_data/panel_build/scripts/2f_add_rain_wind_overlap.R
 ```
 
 [04_rain_wind_events.py](04_rain_wind_events.py)
@@ -175,3 +177,67 @@ summary by 100 / 200 / 300 mm rain thresholds
 
 These files answer one question: do very rainy admin-days often overlap with
 high all-weather ERA5-Land wind?
+
+## Drought Terms
+
+[06_admin_drought_terms.R](06_admin_drought_terms.R)
+
+Builds annual drought terms from existing monthly admin precipitation files.
+The SPI is fit on 1981-2010, separately for each admin region (and each
+calendar month for the monthly SPI).
+
+For each admin region and year, it calculates:
+
+```text
+spi12_dry   dry side of the SPI of the January-December total
+dry_wsum    monthly SPI dry side summed over the year, weighted by each
+            month's usual share of annual rainfall
+dry_sum     same, unweighted
+mckee       McKee drought magnitude (months in drought events)
+spi12_dry_roll30   spi12_dry against the 30 years before instead of 1981-2010
+```
+
+For spi12_dry_roll30, each year's total is compared with the 30 years before
+in the same region, so "normal" moves with the climate. The first 30 years of
+data (1950-1979) have no full history and use those 30 years as their
+baseline.
+
+For mckee, a drought event is a run of dry months (SPI below 0) with at least
+one month at -1 or lower. Every month in an event adds how dry it was (-SPI),
+summed over the year. Dry months outside an event count 0.
+
+Plus, for the drought x normal temp regs
+(`2_analysis/drought/global_annual/04_temp_interaction_regs.R`), with the
+normal temp of a month = the average temp of that calendar month in that
+region, in C, over the 30 years before (rolling, all earlier years since 1950
+if fewer, at least 15) or 1981-2010 (fixed):
+
+```text
+dry_x_normal_rolling   monthly SPI dry side x the month's rolling normal, summed over the year
+dry_x_normal_fixed     same with the fixed normal
+normal_rolling         the year's average of the monthly rolling normals
+normal_fixed           the year's average of the monthly fixed normals (the region's average temp)
+```
+
+Years with missing months are dropped. COL, ECU, PER and PHL have climate for
+two versions of their admin units, and `boundaries` at the top of the script
+picks the one the mortality panel uses (`old_boundaries` or
+`current_boundaries`). Run directly, the script writes:
+
+```text
+era5land_admin_drought_annual.csv
+```
+
+That file is read by the Brazil annual drought scripts
+(`2_analysis/drought/brazil/annual/`). The panel build
+(`1_data/panel_build/scripts/2g_add_drought_terms.R`) doesn't read it: it
+sources the script and runs the same functions on the panel's own admin
+units, for ERA5-Land and CHIRPS, then adds last year's and next year's
+terms.
+
+Run from this folder:
+
+```bash
+srun --account=cil --partition=cil --mem=48G \
+  /project/cil/home_dirs/mdefranciosi/envs/mortality-rainfall-env/bin/Rscript 06_admin_drought_terms.R
+```

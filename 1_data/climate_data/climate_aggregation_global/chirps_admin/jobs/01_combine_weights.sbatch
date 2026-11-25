@@ -36,12 +36,20 @@ COUNTRY=$1
 # $2 = number of polygon chunks that were built for this country.
 PARTS=$2
 
+# Optional third argument: --overwrite, to rebuild existing final weights.
+OVERWRITE=${3:-}
+
 # Keep combine logs next to the chunk logs.
 LOG_DIR="$ROOT/logs/chirps_admin/$COUNTRY/weights"
 
 # -----------------------------
 # Logs and environment
 # -----------------------------
+
+if [[ -n "$OVERWRITE" && "$OVERWRITE" != "--overwrite" ]]; then
+    echo "Unknown third argument: $OVERWRITE" >&2
+    exit 2
+fi
 
 mkdir -p "$LOG_DIR"
 
@@ -62,7 +70,8 @@ echo "country=$COUNTRY parts=$PARTS start=$(date --iso-8601=seconds)"
 "$PYTHON" aggregation_scripts/01_make_weights.py \
     --country "$COUNTRY" \
     --parts "$PARTS" \
-    --combine
+    --combine \
+    $OVERWRITE
 
 "$PYTHON" aggregation_scripts/03_check_outputs.py \
     --country "$COUNTRY"

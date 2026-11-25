@@ -11,8 +11,7 @@ CHIRPS is precipitation only. Daily values are in mm/day on a 0.05-degree grid.
 Precipitation powers are calculated at the grid-cell level first, then averaged
 within each admin unit using population and area weights.
 
-CHIRPS does not cover the whole globe. The selected country should be fully
-inside the CHIRPS latitude band.
+Admin units with no CHIRPS weights get missing precipitation.
 
 Some small coastal or island polygons are assigned CHIRPS cells masked in the
 raw precipitation file. For countries listed in `settings.py`, copy values from

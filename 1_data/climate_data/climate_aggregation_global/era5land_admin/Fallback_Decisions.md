@@ -26,7 +26,7 @@ Listed units:
 |---|---:|
 | CHL | 2 |
 | IND | 1 |
-| PHL | 23 |
+| PHL | 12 |
 | USA | 1 |
 
 Units that are farther than `0.5` degrees stay missing.
@@ -50,3 +50,11 @@ Units farther than `1.6` degrees stay missing.
 ## Rule Of Thumb
 
 If the nearby-cell choice was not reviewed and checked, leave the unit missing.
+
+## Cabo Verde
+
+Sal (`CPV_41`) and Brava (`CPV_91`) are missing for precipitation,
+temperature, and wind. Their nearest valid cells are on other islands (Boa
+Vista and Fogo), so we don't borrow them. `wind_common.py` keeps CPV's
+original cells. Distances are in
+[cell_fallback/README.md](cell_fallback/README.md#cabo-verde).

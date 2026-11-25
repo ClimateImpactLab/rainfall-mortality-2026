@@ -144,7 +144,7 @@ def load_weights(spec: Country, grid: "Grid"):
     require(admin_file(spec).is_file(), f"Missing admin summary: {admin_file(spec)}")
 
     # Read admin IDs as strings so leading zeros are preserved.
-    # The fallback columns are text notes; keep them as text to avoid pandas warnings.
+    # The fallback columns are text notes, kept as text to avoid pandas warnings.
     dtype = {column: "string" for column in spec.id_columns}
     dtype.update({"popwt_fallback": "string", "areawt_fallback": "string"})
     weights = ensure_region_id(pd.read_csv(weights_file(spec), dtype=dtype), spec)
@@ -289,18 +289,36 @@ def read_admins(spec: Country) -> gpd.GeoDataFrame:
     # Country-specific column aliases are defined in settings.py.
     requested = [*spec.id_columns, *spec.name_columns]
     columns = [spec.column_aliases.get(column, column) for column in requested]
+    if spec.code == "PHL":
+        columns.append("drop_no_barmm")
     read_options = {"columns": columns, "engine": "pyogrio"}
     if spec.shapefile_encoding:
         read_options["encoding"] = spec.shapefile_encoding
     admins = gpd.read_file(spec.shapefile, **read_options)
+    # Match the no-BARMM mortality sample. Drop the whole parent zone if any
+    # member belongs to BARMM or its Special Geographic Area (SGA).
+    if spec.code == "PHL":
+        admins = admins.loc[admins.drop_no_barmm.eq(False)].drop(columns="drop_no_barmm").copy()
     for target, source in spec.column_aliases.items():
         require(source in admins, f"Missing source column for {target}: {source}")
         admins[target] = admins[source]
     require(admins.crs is not None, "Shapefile has no CRS")
+    # The PHL merged map kept UTM coordinates but lost their projection label.
+    # The original municipality shapefile's .prj identifies UTM zone 51N.
+    if spec.code == "PHL" and admins.crs.name == "Undefined geographic SRS":
+        admins = admins.set_crs(32651, allow_override=True)
     if admins.crs.to_epsg() != 4326:
         # ERA5-Land coordinates are lon/lat
         admins = admins.to_crs(4326)
     admins["geometry"] = admins.geometry.make_valid()
+    # Province 94 also includes Antarctica and distant South Atlantic islands.
+    # For mortality aggregation, keep Tierra del Fuego and its nearby islands.
+    # These bounds contain whole polygon parts without cutting through them.
+    if spec.code == "ARG":
+        tierra_del_fuego = admins.province_code.eq("94")
+        admins.loc[tierra_del_fuego, "geometry"] = admins.loc[
+            tierra_del_fuego, "geometry"
+        ].intersection(box(-75, -56, -63, -50))
     require(admins.geometry.notna().all(), "Shapefile contains missing geometry")
     require((~admins.geometry.is_empty).all(), "Shapefile contains empty geometry")
     admins = add_region_id(admins, spec)
